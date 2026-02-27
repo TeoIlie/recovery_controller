@@ -64,6 +64,10 @@ class RecoveryNode(Node):
         y = self._latest_pose.pose.position.y
 
         if not self._in_zone(x, y):
+            self.get_logger().warn(
+                f"Outside zone at ({x:.2f}, {y:.2f}) — e-braking",
+                throttle_duration_sec=0.5,
+            )
             msg = AckermannDriveStamped()
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.drive.speed = 0.0
