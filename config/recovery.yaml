@@ -1,0 +1,13 @@
+recovery_node:
+  ros__parameters:
+    # Vicon rigid-body name — subscribes to /vrpn_mocap/<vicon_body_name>/pose
+    vicon_body_name: "f110"
+
+    # Recovery zone: axis-aligned rectangle in Vicon world frame (metres)
+    # Calibrate with a ruler in the Vicon space before real tests
+    zone_x_max:  2.0
+    zone_y_min: -1.0
+    zone_y_max:  1.0
+
+    # Node rate (Hz) — should match sim timestep (0.01 s)
+    rate: 100.0
