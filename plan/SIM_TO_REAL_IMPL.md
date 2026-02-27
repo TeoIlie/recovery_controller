@@ -272,22 +272,26 @@ vehicle:
 
 ## Implementation Phases
 
-### Phase 1: Package scaffold + zone monitoring (simplified)
+### Phase 1: Package scaffold + zone monitoring ✓
 
-No state machine, no arm/disarm services, no e-brake topic. The node is purely reactive:
-when the car is inside the zone it publishes `speed=0, steering_angle=0` on `/drive`;
-when outside it stops publishing and the mux times out (200 ms), returning control to the joystick.
+No state machine, no arm/disarm services. The node is purely reactive using the `/ebrake` topic
+(priority 200): when the car is **outside** the recovery zone, the node publishes `speed=0,
+steering_angle=0` on `/ebrake` to override all other commands. When **inside** the zone, it
+publishes nothing — the mux times out `/ebrake` within 500 ms and `/drive` + `/teleop` regain
+control.
 
-1. Create `recovery_controller` package structure
-2. Define zone geometry in `config/recovery.yaml` as an axis-aligned rectangle
-   (`x_min`, `x_max`, `y_min`, `y_max` in Vicon world frame) plus the Vicon rigid-body name
-3. Implement `recovery_node.py`:
-   - Subscribe to `/vrpn_mocap/<name>/pose` (PoseStamped)
-   - At 100 Hz: check if car (x, y) is inside the rectangle; if yes, publish
-     `AckermannDriveStamped(speed=0, steering_angle=0)` on `/drive`; if no, publish nothing
-4. Wire into `recovery_bringup_launch.py` (launch file already exists in `f1tenth_stack`)
-5. **Test**: Carry car through zone manually → verify `/drive` publishes only while inside;
-   verify joystick regains control within 200 ms of exit
+1. ✓ Created `recovery_controller` package structure
+2. ✓ Defined zone geometry in `config/recovery.yaml` as a half-bounded rectangle
+   (`zone_x_max`, `zone_y_min`, `zone_y_max` in Vicon world frame — no `x_min`, unbounded on
+   entry side) plus the Vicon rigid-body name and timer rate
+3. ✓ Implemented `recovery_node.py`:
+   - Subscribes to `/vrpn_mocap/<name>/pose` (PoseStamped, BEST_EFFORT QoS)
+   - At configured rate: checks if car (x, y) is inside the zone; if **outside**, publishes
+     `AckermannDriveStamped(speed=0, steering_angle=0)` on `/ebrake` with throttled warning log;
+     if inside, publishes nothing
+4. ✓ Wired into `recovery_bringup_launch.py` (launch file in `f1tenth_stack`)
+5. **Test**: Carry car through zone manually → verify `/ebrake` publishes only while outside;
+   verify `/drive` + `/teleop` regain control within 500 ms of entering the zone
 
 ### Phase 2: State estimator + observation builder (pure Python)
 
