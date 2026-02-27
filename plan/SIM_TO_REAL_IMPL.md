@@ -272,14 +272,22 @@ vehicle:
 
 ## Implementation Phases
 
-### Phase 1: Package scaffold + zone monitoring + e-brake
+### Phase 1: Package scaffold + zone monitoring (simplified)
 
-1. Create `recovery_controller` package structure, add submodule to `F1TENTH_System`
-2. Implement `recovery_node.py`: zone geometry, state machine, arm/disarm services, e-brake publishing
-3. Create `recovery_mux.yaml` (existing mux config + ebrake topic at priority 200)
-4. Create `recovery_bringup_launch.py` (includes base bringup + recovery node)
-5. **Test**: Carry car through zone manually → verify entry/exit/bounds/dropout detection and
-   e-brake on `/ebrake`; verify mux priority: e-brake overrides joystick
+No state machine, no arm/disarm services, no e-brake topic. The node is purely reactive:
+when the car is inside the zone it publishes `speed=0, steering_angle=0` on `/drive`;
+when outside it stops publishing and the mux times out (200 ms), returning control to the joystick.
+
+1. Create `recovery_controller` package structure
+2. Define zone geometry in `config/recovery.yaml` as an axis-aligned rectangle
+   (`x_min`, `x_max`, `y_min`, `y_max` in Vicon world frame) plus the Vicon rigid-body name
+3. Implement `recovery_node.py`:
+   - Subscribe to `/vrpn_mocap/<name>/pose` (PoseStamped)
+   - At 100 Hz: check if car (x, y) is inside the rectangle; if yes, publish
+     `AckermannDriveStamped(speed=0, steering_angle=0)` on `/drive`; if no, publish nothing
+4. Wire into `recovery_bringup_launch.py` (launch file already exists in `f1tenth_stack`)
+5. **Test**: Carry car through zone manually → verify `/drive` publishes only while inside;
+   verify joystick regains control within 200 ms of exit
 
 ### Phase 2: State estimator + observation builder (pure Python)
 
