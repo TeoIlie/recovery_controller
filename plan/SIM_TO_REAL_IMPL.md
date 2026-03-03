@@ -304,6 +304,11 @@ control.
 ### Phase 3: Policy inference + full pipeline
 
 1. Implement `policy_runner.py`, wire into `recovery_node.py`
+   - **Zone-conditional publishing**: `recovery_node` must publish on `/drive` **only** while in
+     `ACTIVE` state (autonomous zone, after crossing the entry line). In `ARMED`/`IDLE` (entry zone),
+     it must not publish on `/drive` so that the 200 ms mux timeout fires and `/teleop` (priority 100)
+     wins. This is what makes `drive` priority 150 > `teleop` priority 100 safe: the higher priority
+     is only exercised when the recovery policy is actually running.
 2. **Test**: Known obs vector → verify action matches `model.predict()` in Python directly
 3. **Test**: Full pipeline on stand (wheels off ground) with mock Vicon data; verify motor/servo response
 4. **Test**: Mux arbitration — recovery active → joystick override → e-brake override (all priority
