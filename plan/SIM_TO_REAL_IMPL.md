@@ -69,8 +69,8 @@ is under joystick control — operator must hold LB deadman.
 
 ## Node Specification: `recovery_node` (100 Hz)
 
-**Subscribes**: `/vrpn_mocap/<name>/pose` (PoseStamped), `/sensors/core` (VescStateStamped),
-`/sensors/imu/raw` (Imu)
+**Subscribes**: `/vrpn_mocap/<name>/pose` (PoseStamped), `/vrpn_mocap/<name>/twist` (TwistStamped),
+`/sensors/core` (VescStateStamped), `/sensors/imu/raw` (Imu)
 **Publishes**: `/drive` (AckermannDriveStamped), `/ebrake` (AckermannDriveStamped)
 **Services**: `/recovery/arm` (Trigger), `/recovery/disarm` (Trigger)
 
@@ -89,7 +89,7 @@ IDLE ─[arm]─► ARMED ─[crosses entry line]─► ACTIVE
 1. Zone check: read latest Vicon pose, update state machine
 2. If `E_BRAKE`: publish `speed=0, steer=0` on `/ebrake` (priority 200), return
 3. If not `ACTIVE`: return (mux masks `/drive` via 200 ms timeout)
-4. State estimation: differentiate Vicon position → body-frame vx/vy, Butterworth LPF
+4. State estimation: read Vicon twist → rotate to body-frame vx/vy
 5. Observation: build 18-element normalized vector (spec below)
 6. Inference: `model.predict(obs, deterministic=True)`
 7. Update internal state: `prev_steering_cmd`, `prev_accl_cmd`, `curr_vel_cmd`
@@ -124,8 +124,8 @@ Normalization formula (from `utils.py:normalize_feature`):
 
 | Idx | Feature | Real-car source | Norm bounds |
 |-----|---------|-----------------|-------------|
-| 0 | `linear_vel_x` | Vicon Δpos/Δt → body frame vx | `[−5.0, 20.0]` |
-| 1 | `linear_vel_y` | Vicon Δpos/Δt → body frame vy | `[−10.0, 10.0]` |
+| 0 | `linear_vel_x` | Vicon twist → body frame vx | `[−5.0, 20.0]` |
+| 1 | `linear_vel_y` | Vicon twist → body frame vy | `[−10.0, 10.0]` |
 | 2 | `frenet_u` | `wrap(yaw − zone_heading, −π, π)` | `[−π, π]` |
 | 3 | `frenet_n` | signed perp. distance to centerline | `[−1.1, 1.1]` |
 | 4 | `ang_vel_z` | `Imu.angular_velocity.z` (rad/s, direct) | `[−5.0, 5.0]` |
@@ -140,16 +140,18 @@ Normalization formula (from `utils.py:normalize_feature`):
 
 ### Per-feature derivation details
 
-**Body-frame velocity from Vicon** — differentiate world-frame position, then rotate:
+**Body-frame velocity from Vicon** — read world-frame velocity from `/vrpn_mocap/<name>/twist`
+(TwistStamped), then rotate into body frame using yaw from the pose topic:
 
 ```python
-world_vx = (x[t] - x[t-1]) / dt   # low-pass filter before rotation
-world_vy = (y[t] - y[t-1]) / dt
+world_vx = twist.linear.x
+world_vy = twist.linear.y
 vx =  world_vx * cos(yaw) + world_vy * sin(yaw)
 vy = -world_vx * sin(yaw) + world_vy * cos(yaw)
 ```
 
-Apply 2nd-order Butterworth low-pass (~20 Hz cutoff, tunable) on `world_vx/vy` before rotation.
+No Butterworth filter needed — Vicon computes velocity internally from its tracking algorithm,
+which is far cleaner than finite-differencing position at 100 Hz.
 Validate `vx` against VESC `/odom` during straight-line manual driving.
 
 **Frenet coordinates** — straight-line zone, pure vector math (no spline needed):
@@ -299,7 +301,7 @@ control.
 2. **Unit test**: Known inputs → verify normalization matches `utils.py:normalize_feature` exactly
 3. **Unit test**: Frenet math with car at known positions relative to zone
 4. **Manual drive test**: Record bag, replay through estimator, compare `vx` to `/odom`, `yaw_rate` to
-   IMU gyro; expect close agreement. Tune Butterworth cutoff.
+   IMU gyro; expect close agreement.
 
 ### Phase 3: Policy inference + full pipeline
 
@@ -329,7 +331,7 @@ control.
 | Risk | Mitigation |
 |------|------------|
 | Vicon dropout during recovery | 50 ms freshness check → publish on `/ebrake` |
-| `vx/vy` from differentiation are noisy | Butterworth LPF; validate vs VESC odom before any policy run |
+| `vx/vy` from Vicon twist may lag or be noisy at high dynamics | Validate vs VESC odom before any policy run; fall back to Butterworth-filtered differentiation if needed |
 | `delta` mismatch: servo feedback lags policy output | Consider tracking last commanded `action[1] × s_max` instead of servo readback |
 | `curr_vel_cmd` initialization causes jerk | Init from VESC ERPM at activation (matches sim reset `curr_vel_cmd = state[3]`) |
 | `beta` undefined at near-zero speed | Guard: `beta = atan2(vy, vx) if vx > 0.5 else 0` |

@@ -1,5 +1,8 @@
 recovery_node:
   ros__parameters:
+    # IP address of the Vicon VRPN server
+    vicon_server: "192.168.2.12"
+
     # Vicon rigid-body name — subscribes to /vrpn_mocap/<vicon_body_name>/pose
     vicon_body_name: "f110"
 
@@ -7,8 +10,8 @@ recovery_node:
     # Calibrate with a ruler in the Vicon space before real tests
     zone_x_min: -2.0
     zone_x_max:  2.0
-    zone_y_min: -1.0
-    zone_y_max:  1.0
+    zone_y_min: -1.1
+    zone_y_max:  1.1
 
     # Node rate (Hz) — should match sim timestep (0.01 s)
     rate: 100.0
