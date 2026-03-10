@@ -1,4 +1,6 @@
 import math
+
+import numpy as np
 import pytest
 from recovery_controller.state_estimator import StateEstimator, wrap_angle
 
@@ -188,3 +190,90 @@ def test_sideslip_straight(est):
 def test_sideslip_drifting(est):
     """Known sideslip angle."""
     assert est.sideslip(5.0, 5.0) == pytest.approx(math.pi / 4)
+
+
+# --- yaw_from_quaternion ---
+
+
+def _quat_from_yaw(yaw: float) -> tuple[float, float, float, float]:
+    """Helper: build a pure-yaw quaternion and return (qx, qy, qz, qw)."""
+    qw = math.cos(yaw / 2)
+    qz = math.sin(yaw / 2)
+    return 0.0, 0.0, qz, qw
+
+
+def test_yaw_from_quat_zero():
+    yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(0.0))
+    assert yaw == pytest.approx(0.0)
+
+
+def test_yaw_from_quat_90():
+    yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(math.pi / 2))
+    assert yaw == pytest.approx(math.pi / 2)
+
+
+def test_yaw_from_quat_negative():
+    yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(-0.7))
+    assert yaw == pytest.approx(-0.7)
+
+
+def test_yaw_from_quat_near_pi():
+    yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(math.pi - 0.01))
+    assert yaw == pytest.approx(math.pi - 0.01, abs=1e-6)
+
+
+# --- body_frame_velocity with quaternion-derived yaw ---
+
+
+def test_body_vel_via_quaternion_45deg(est):
+    """Car facing 45°, moving 5 m/s along that heading → vx=5, vy=0."""
+    yaw = math.pi / 4
+    world_vx = 5.0 * math.cos(yaw)
+    world_vy = 5.0 * math.sin(yaw)
+    car_yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(yaw))
+    vx, vy = est.body_frame_velocity(world_vx, world_vy, car_yaw)
+    assert vx == pytest.approx(5.0, abs=1e-10)
+    assert vy == pytest.approx(0.0, abs=1e-10)
+
+
+def test_body_vel_via_quaternion_lateral(est):
+    """Car facing 0°, moving purely in +y → vx=0, vy=5."""
+    car_yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(0.0))
+    vx, vy = est.body_frame_velocity(0.0, 5.0, car_yaw)
+    assert vx == pytest.approx(0.0, abs=1e-10)
+    assert vy == pytest.approx(5.0, abs=1e-10)
+
+
+# --- frenet_coords with quaternion-derived yaw ---
+
+
+def test_frenet_via_quaternion_aligned(est):
+    """Car on centerline facing along zone, yaw from quaternion."""
+    car_yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(0.0))
+    u, n = est.frenet_coords(2.0, 0.0, car_yaw)
+    assert u == pytest.approx(0.0)
+    assert n == pytest.approx(0.0)
+
+
+def test_frenet_via_quaternion_heading_error(est):
+    """Car turned 0.3 rad from zone heading, yaw from quaternion."""
+    car_yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(0.3))
+    u, n = est.frenet_coords(2.0, 0.0, car_yaw)
+    assert u == pytest.approx(0.3, abs=1e-6)
+    assert n == pytest.approx(0.0)
+
+
+def test_frenet_via_quaternion_diagonal_zone():
+    """45° zone: car on centerline facing along zone, yaw from quaternion."""
+    est = StateEstimator(
+        zone_start=(0.0, 0.0),
+        zone_end=(1.0, 1.0),
+        servo_offset=0.512,
+        servo_gain=-0.673,
+        speed_to_erpm_gain=4600.0,
+        wheel_radius=0.049,
+    )
+    car_yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(math.pi / 4))
+    u, n = est.frenet_coords(0.5, 0.5, car_yaw)
+    assert u == pytest.approx(0.0, abs=1e-10)
+    assert n == pytest.approx(0.0, abs=1e-10)

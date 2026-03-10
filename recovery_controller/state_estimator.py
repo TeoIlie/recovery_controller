@@ -7,6 +7,7 @@ derived physical quantities needed by the observation builder.
 import math
 
 import numpy as np
+from transforms3d.euler import quat2euler
 
 
 def wrap_angle(angle: float) -> float:
@@ -55,6 +56,13 @@ class StateEstimator:
         self.servo_gain = servo_gain
         self.speed_to_erpm_gain = speed_to_erpm_gain
         self.wheel_radius = wheel_radius
+
+    @staticmethod
+    def yaw_from_quaternion(qx: float, qy: float, qz: float, qw: float) -> float:
+        """Extract yaw from a quaternion (ROS ordering: x, y, z, w)."""
+        # transforms3d expects (w, x, y, z)
+        _, _, yaw = quat2euler([qw, qx, qy, qz])
+        return yaw
 
     def body_frame_velocity(
         self, world_vx: float, world_vy: float, yaw: float

@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Float64, String
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -52,14 +52,17 @@ class RecoveryNode(Node):
 
         # Latest sensor data (None until first message arrives)
         self._latest_pose = None
+        self._latest_twist = None
         self._latest_imu = None
         self._latest_servo_pos = None
         self._latest_erpm = None
 
-        # Subscribe to Vicon pose (VRPN client publishes BEST_EFFORT)
-        pose_topic = f"/vrpn_mocap/{body_name}/pose"
+        # Subscribe to Vicon pose and twist (VRPN client publishes BEST_EFFORT)
         vrpn_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        pose_topic = f"/vrpn_mocap/{body_name}/pose"
+        twist_topic = f"/vrpn_mocap/{body_name}/twist"
         self.create_subscription(PoseStamped, pose_topic, self._pose_cb, vrpn_qos)
+        self.create_subscription(TwistStamped, twist_topic, self._twist_cb, vrpn_qos)
 
         # Subscribe to VESC IMU
         self.create_subscription(Imu, "/sensors/imu/raw", self._imu_cb, 10)
@@ -116,6 +119,9 @@ class RecoveryNode(Node):
     def _pose_cb(self, msg: PoseStamped):
         self._latest_pose = msg
 
+    def _twist_cb(self, msg: TwistStamped):
+        self._latest_twist = msg
+
     def _imu_cb(self, msg: Imu):
         self._latest_imu = msg
 
@@ -141,6 +147,26 @@ class RecoveryNode(Node):
             return
 
         # --- Compute observation features ---
+        q = self._latest_pose.pose.orientation
+        x = self._latest_pose.pose.position.x
+        y = self._latest_pose.pose.position.y
+        yaw = self._estimator.yaw_from_quaternion(q.x, q.y, q.z, q.w)
+
+        # Body-frame velocity from Vicon twist
+        vx, vy = 0.0, 0.0
+        if self._latest_twist is not None:
+            vx, vy = self._estimator.body_frame_velocity(
+                self._latest_twist.twist.linear.x,
+                self._latest_twist.twist.linear.y,
+                yaw,
+            )
+
+        # Frenet coordinates (heading error + lateral offset)
+        frenet_u, frenet_n = self._estimator.frenet_coords(x, y, yaw)
+
+        # Sideslip
+        beta = self._estimator.sideslip(vx, vy)
+
         ang_vel_z = 0.0
         if self._latest_imu is not None:
             ang_vel_z = self._estimator.yaw_rate(self._latest_imu.angular_velocity.z)
@@ -154,24 +180,26 @@ class RecoveryNode(Node):
             wheel_omega = self._estimator.wheel_omega(self._latest_erpm)
 
         obs = self._obs_builder.build(
-            vx=0.0,
-            vy=0.0,
-            frenet_u=0.0,
-            frenet_n=0.0,
+            vx=vx,
+            vy=vy,
+            frenet_u=frenet_u,
+            frenet_n=frenet_n,
             ang_vel_z=ang_vel_z,
             delta=delta,
-            beta=0.0,
+            beta=beta,
             wheel_omega=wheel_omega,
         )
 
         # --- Debug: publish raw (pre-normalization) values ---
         debug_msg = String()
-        debug_msg.data = f'{{"ang_vel_z": {ang_vel_z:.4f}, "delta": {delta:.4f}, "wheel_omega": {wheel_omega:.4f}}}'
+        debug_msg.data = (
+            f'{{"vx": {vx:.4f}, "vy": {vy:.4f}, '
+            f'"frenet_u": {frenet_u:.4f}, "frenet_n": {frenet_n:.4f}, '
+            f'"beta": {beta:.4f}, '
+            f'"ang_vel_z": {ang_vel_z:.4f}, "delta": {delta:.4f}, '
+            f'"wheel_omega": {wheel_omega:.4f}}}'
+        )
         self._debug_pub.publish(debug_msg)
-
-        # Update pose from Vicon
-        x = self._latest_pose.pose.position.x
-        y = self._latest_pose.pose.position.y
 
         if not self.debug:
             if self._in_ebrake_zone(x, y):
