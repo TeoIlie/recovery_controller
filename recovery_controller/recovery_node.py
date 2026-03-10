@@ -3,7 +3,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Imu
-from std_msgs.msg import String
+from std_msgs.msg import Float64, String
 from ackermann_msgs.msg import AckermannDriveStamped
 from recovery_controller.state_estimator import StateEstimator
 from recovery_controller.observation_builder import ObservationBuilder
@@ -27,6 +27,8 @@ class RecoveryNode(Node):
         self.declare_parameter("zone_y_max", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("rate", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("debug", rclpy.Parameter.Type.BOOL)
+        self.declare_parameter("steering_angle_to_servo_gain", rclpy.Parameter.Type.DOUBLE)
+        self.declare_parameter("steering_angle_to_servo_offset", rclpy.Parameter.Type.DOUBLE)
 
         # Read parameters
         body_name = self.get_parameter("vicon_body_name").value
@@ -36,10 +38,13 @@ class RecoveryNode(Node):
         self.zone_y_max = self.get_parameter("zone_y_max").value
         rate = self.get_parameter("rate").value
         self.debug = self.get_parameter("debug").value
+        servo_gain = self.get_parameter("steering_angle_to_servo_gain").value
+        servo_offset = self.get_parameter("steering_angle_to_servo_offset").value
 
         # Latest sensor data (None until first message arrives)
         self._latest_pose = None
         self._latest_imu = None
+        self._latest_servo_pos = None
 
         # Subscribe to Vicon pose (VRPN client publishes BEST_EFFORT)
         pose_topic = f"/vrpn_mocap/{body_name}/pose"
@@ -49,16 +54,21 @@ class RecoveryNode(Node):
         # Subscribe to VESC IMU
         self.create_subscription(Imu, "/sensors/imu/raw", self._imu_cb, 10)
 
+        # Subscribe to VESC servo position (event-driven, published on each servo command)
+        self.create_subscription(Float64, "/sensors/servo_position_command", self._servo_cb, 10)
+
         # Publisher on /ebrake for safety stop
         self._ebrake_pub = self.create_publisher(AckermannDriveStamped, "/ebrake", 10)
 
         # Publisher on /drive for autonomous recovery control
         self._drive_pub = self.create_publisher(AckermannDriveStamped, "/drive", 10)
 
-        # State estimator (zone geometry placeholder — will be configured later)
+        # State estimator
         self._estimator = StateEstimator(
             zone_start=(self.zone_x_min, self.zone_y_min),
             zone_end=(self.zone_x_max, self.zone_y_max),
+            servo_offset=servo_offset,
+            servo_gain=servo_gain,
         )
 
         # Observation builder
@@ -90,6 +100,9 @@ class RecoveryNode(Node):
     def _imu_cb(self, msg: Imu):
         self._latest_imu = msg
 
+    def _servo_cb(self, msg: Float64):
+        self._latest_servo_pos = msg.data
+
     def _in_ebrake_zone(self, x: float, y: float) -> bool:
         """Vehicle is in safety ebrake zone"""
         return x >= self.zone_x_max or y <= self.zone_y_min or y >= self.zone_y_max
@@ -110,20 +123,24 @@ class RecoveryNode(Node):
         if self._latest_imu is not None:
             ang_vel_z = self._estimator.yaw_rate(self._latest_imu.angular_velocity.z)
 
+        delta = 0.0
+        if self._latest_servo_pos is not None:
+            delta = self._estimator.steering_angle(self._latest_servo_pos)
+
         obs = self._obs_builder.build(
             vx=0.0,
             vy=0.0,
             frenet_u=0.0,
             frenet_n=0.0,
             ang_vel_z=ang_vel_z,
-            delta=0.0,
+            delta=delta,
             beta=0.0,
             wheel_omega=0.0,
         )
 
         # --- Debug: publish raw (pre-normalization) values ---
         debug_msg = String()
-        debug_msg.data = f'{{"ang_vel_z": {ang_vel_z:.4f}, "obs[4]": {obs[4]:.4f}}}'
+        debug_msg.data = f'{{"ang_vel_z": {ang_vel_z:.4f}, "delta": {delta:.4f}}}'
         self._debug_pub.publish(debug_msg)
 
         # Update pose from Vicon
