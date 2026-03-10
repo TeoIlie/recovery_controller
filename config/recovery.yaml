@@ -15,3 +15,6 @@ recovery_node:
 
     # Node rate (Hz) — should match sim timestep (0.01 s)
     rate: 100.0
+
+    # Debug mode — disables autonomous drive and ebrake publishing
+    debug: false
