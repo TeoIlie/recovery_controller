@@ -122,21 +122,21 @@ Matches `observation_factory("drift")` → `VectorObservation` in `observation.p
 Normalization formula (from `utils.py:normalize_feature`):
 `norm = clip(2*(val − min) / (max − min) − 1, −1, 1)`
 
-| Idx | Feature | Real-car source | Norm bounds |
-|-----|---------|-----------------|-------------|
-| 0 | `linear_vel_x` | Vicon twist → body frame vx | `[−5.0, 20.0]` |
-| 1 | `linear_vel_y` | Vicon twist → body frame vy | `[−10.0, 10.0]` |
-| 2 | `frenet_u` | `wrap(yaw − zone_heading, −π, π)` | `[−π, π]` |
-| 3 | `frenet_n` | signed perp. distance to centerline | `[−1.1, 1.1]` |
-| 4 | `ang_vel_z` | `Imu.angular_velocity.z` (rad/s, direct) | `[−5.0, 5.0]` |
-| 5 | `delta` | VESC: `(servo_pos − 0.512) / (−0.673)` | `[−0.5, 0.5]` |
-| 6 | `beta` | `atan2(vy, vx)`; use 0 if `vx < 0.5 m/s` | `[−π/3, π/3]` |
-| 7 | `prev_steering_cmd` | last raw `action[1]` from network (`[−1, 1]`) | `[−1.0, 1.0]` |
-| 8 | `prev_accl_cmd` | last `action[0] × a_max` (m/s², denorm.) | `[−5.0, 5.0]` |
-| 9 | `prev_avg_wheel_omega` | `ERPM / (4600 × 0.049)` (rad/s) | `[0.0, 2612.24]` |
-| 10 | `curr_vel_cmd` | integrated (see below) | `[−5.0, 20.0]` |
-| 11–15 | `lookahead_curvatures` ×5 | `[0, 0, 0, 0, 0]` (straight line) | `[−1.95, 1.95]` |
-| 16–17 | `lookahead_widths` ×2 (sparse) | `[zone_full_width, zone_full_width]` | `[1.2, 2.2]` |
+| Idx | Feature | Real-car source | Norm bounds | Status |
+|-----|---------|-----------------|-------------|--------|
+| 0 | `linear_vel_x` | Vicon twist → body frame vx | `[−5.0, 20.0]` | TESTING |
+| 1 | `linear_vel_y` | Vicon twist → body frame vy | `[−10.0, 10.0]` | TESTING |
+| 2 | `frenet_u` | `wrap(yaw − zone_heading, −π, π)` | `[−π, π]` | TESTING |
+| 3 | `frenet_n` | signed perp. distance to centerline | `[−1.1, 1.1]` | TESTING |
+| 4 | `ang_vel_z` | `Imu.angular_velocity.z` (rad/s, direct) | `[−5.0, 5.0]` | DONE |
+| 5 | `delta` | VESC: `(servo_pos − 0.512) / (−0.673)` | `[−0.5, 0.5]` | DONE |
+| 6 | `beta` | `atan2(vy, vx)`; use 0 if `vx < 0.5 m/s` | `[−π/3, π/3]` | TESTING |
+| 7 | `prev_steering_cmd` | last raw `action[1]` from network (`[−1, 1]`) | `[−1.0, 1.0]` | |
+| 8 | `prev_accl_cmd` | last `action[0] × a_max` (m/s², denorm.) | `[−5.0, 5.0]` | |
+| 9 | `prev_avg_wheel_omega` | `ERPM / (4600 × 0.049)` (rad/s) | `[0.0, 2612.24]` | DONE |
+| 10 | `curr_vel_cmd` | integrated (see below) | `[−5.0, 20.0]` | |
+| 11–15 | `lookahead_curvatures` ×5 | `[0, 0, 0, 0, 0]` (straight line) | `[−1.95, 1.95]` | DONE |
+| 16–17 | `lookahead_widths` ×2 (sparse) | `[zone_full_width, zone_full_width]` | `[1.2, 2.2]` | DONE |
 
 ### Per-feature derivation details
 
@@ -295,13 +295,45 @@ control.
 5. **Test**: Carry car through zone manually → verify `/ebrake` publishes only while outside;
    verify `/drive` + `/teleop` regain control within 500 ms of entering the zone
 
-### Phase 2: State estimator + observation builder (pure Python)
+### Phase 2: State estimator + observation builder (pure Python) — IN PROGRESS
 
-1. Implement `state_estimator.py` and `observation_builder.py` as pure Python classes
-2. **Unit test**: Known inputs → verify normalization matches `utils.py:normalize_feature` exactly
-3. **Unit test**: Frenet math with car at known positions relative to zone
+1. ✓ Implemented `state_estimator.py` and `observation_builder.py` as pure Python classes
+2. ✓ **Unit test**: Known inputs → verify normalization matches `utils.py:normalize_feature` exactly
+3. ✓ **Unit test**: Frenet math with car at known positions relative to zone
 4. **Manual drive test**: Record bag, replay through estimator, compare `vx` to `/odom`, `yaw_rate` to
    IMU gyro; expect close agreement.
+
+**Implementation departures from original plan:**
+
+- **Yaw extraction**: `state_estimator.py` uses `transforms3d.euler.quat2euler` (third-party, installed
+  via `pip install transforms3d`) to extract yaw from the Vicon pose quaternion. The node calls
+  `yaw_from_quaternion()` once per tick and passes the scalar yaw to `body_frame_velocity()` and
+  `frenet_coords()`.
+- **Vicon twist subscription**: `recovery_node` subscribes to `/vrpn_mocap/<name>/twist`
+  (TwistStamped, BEST_EFFORT QoS) in addition to `/pose`. The plan mentioned this topic but the
+  Phase 1 node only subscribed to pose.
+- **Servo position source**: `delta` is read from `/sensors/servo_position_command` (Float64) rather
+  than `VescState.servo_position` from `/sensors/core`. This gives the commanded servo value directly.
+- **`ang_vel_z` from IMU**: The VESC IMU publishes `angular_velocity.z` in **rad/s** (not deg/s as
+  originally assumed). The `yaw_rate()` method converts deg/s → rad/s, so if the IMU already
+  publishes rad/s this conversion is incorrect — **needs validation** on the real car.
+- **`observation_builder.py` partially stubbed**: `build()` accepts all sensor features as arguments
+  but still writes `0.0` for `vx`, `vy`, `frenet_u`, `frenet_n`, `beta`, `prev_steering_cmd`,
+  `prev_accl_cmd`, `wheel_omega`, and `curr_vel_cmd` (TODO placeholders). The `recovery_node` does
+  compute and pass the real values; the builder just doesn't use them yet.
+- **Debug topic**: Node publishes raw pre-normalization values on `/recovery/debug_obs` (String) for
+  live validation — not in the original plan. Includes `yaw`, `vx`, `vy`, `frenet_u`, `frenet_n`,
+  `beta`, `ang_vel_z`, `delta`, `wheel_omega`.
+- **Debug mode**: `recovery.yaml` includes a `debug` parameter. When `debug: true`, the node computes
+  and publishes observations on `/recovery/debug_obs` but skips ebrake/drive publishing, allowing
+  safe observation validation while teleoping.
+- **Zone geometry**: Config uses a full rectangle (`zone_x_min`, `zone_x_max`, `zone_y_min`,
+  `zone_y_max`) rather than the half-bounded rectangle described in Phase 1. `zone_start` and
+  `zone_end` for the `StateEstimator` centerline are derived as `(x_min, y_min)` → `(x_max, y_max)`
+  — this assumes the zone diagonal is the centerline, which may need correction for a non-diagonal
+  zone.
+- **GitHub Actions**: Added `.github/workflows/test.yml` to the `recovery_controller` submodule repo
+  to run pytest on push/PR to `main`.
 
 ### Phase 3: Policy inference + full pipeline
 

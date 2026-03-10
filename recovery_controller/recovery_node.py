@@ -151,6 +151,9 @@ class RecoveryNode(Node):
         x = self._latest_pose.pose.position.x
         y = self._latest_pose.pose.position.y
         yaw = self._estimator.yaw_from_quaternion(q.x, q.y, q.z, q.w)
+        
+        # TODO remove logging after testing
+        # self.get_logger().info(f"yaw={yaw:.4f}", throttle_duration_sec=0.5)
 
         # Body-frame velocity from Vicon twist
         vx, vy = 0.0, 0.0
@@ -193,11 +196,15 @@ class RecoveryNode(Node):
         # --- Debug: publish raw (pre-normalization) values ---
         debug_msg = String()
         debug_msg.data = (
-            f'{{"vx": {vx:.4f}, "vy": {vy:.4f}, '
-            f'"frenet_u": {frenet_u:.4f}, "frenet_n": {frenet_n:.4f}, '
-            f'"beta": {beta:.4f}, '
-            f'"ang_vel_z": {ang_vel_z:.4f}, "delta": {delta:.4f}, '
-            f'"wheel_omega": {wheel_omega:.4f}}}'
+            f"yaw={yaw:.4f}\n"
+            f"vx={vx:.4f}\n"
+            f"vy={vy:.4f}\n"
+            f"frenet_u={frenet_u:.4f}\n"
+            f"frenet_n={frenet_n:.4f}\n"
+            f"beta={beta:.4f}\n"
+            f"ang_vel_z={ang_vel_z:.4f}\n"
+            f"delta={delta:.4f}\n"
+            f"wheel_omega={wheel_omega:.4f}"
         )
         self._debug_pub.publish(debug_msg)
 
