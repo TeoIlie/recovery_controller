@@ -5,6 +5,7 @@ from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Float64, String
 from ackermann_msgs.msg import AckermannDriveStamped
+from vesc_msgs.msg import VescStateStamped
 from recovery_controller.state_estimator import StateEstimator
 from recovery_controller.observation_builder import ObservationBuilder
 
@@ -27,8 +28,14 @@ class RecoveryNode(Node):
         self.declare_parameter("zone_y_max", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("rate", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("debug", rclpy.Parameter.Type.BOOL)
-        self.declare_parameter("steering_angle_to_servo_gain", rclpy.Parameter.Type.DOUBLE)
-        self.declare_parameter("steering_angle_to_servo_offset", rclpy.Parameter.Type.DOUBLE)
+        self.declare_parameter(
+            "steering_angle_to_servo_gain", rclpy.Parameter.Type.DOUBLE
+        )
+        self.declare_parameter(
+            "steering_angle_to_servo_offset", rclpy.Parameter.Type.DOUBLE
+        )
+        self.declare_parameter("speed_to_erpm_gain", rclpy.Parameter.Type.DOUBLE)
+        self.declare_parameter("wheel_radius", rclpy.Parameter.Type.DOUBLE)
 
         # Read parameters
         body_name = self.get_parameter("vicon_body_name").value
@@ -40,11 +47,14 @@ class RecoveryNode(Node):
         self.debug = self.get_parameter("debug").value
         servo_gain = self.get_parameter("steering_angle_to_servo_gain").value
         servo_offset = self.get_parameter("steering_angle_to_servo_offset").value
+        speed_to_erpm_gain = self.get_parameter("speed_to_erpm_gain").value
+        wheel_radius = self.get_parameter("wheel_radius").value
 
         # Latest sensor data (None until first message arrives)
         self._latest_pose = None
         self._latest_imu = None
         self._latest_servo_pos = None
+        self._latest_erpm = None
 
         # Subscribe to Vicon pose (VRPN client publishes BEST_EFFORT)
         pose_topic = f"/vrpn_mocap/{body_name}/pose"
@@ -54,8 +64,15 @@ class RecoveryNode(Node):
         # Subscribe to VESC IMU
         self.create_subscription(Imu, "/sensors/imu/raw", self._imu_cb, 10)
 
+        # Subscribe to VESC state (ERPM, servo position, etc.)
+        self.create_subscription(
+            VescStateStamped, "/sensors/core", self._vesc_state_cb, 10
+        )
+
         # Subscribe to VESC servo position (event-driven, published on each servo command)
-        self.create_subscription(Float64, "/sensors/servo_position_command", self._servo_cb, 10)
+        self.create_subscription(
+            Float64, "/sensors/servo_position_command", self._servo_cb, 10
+        )
 
         # Publisher on /ebrake for safety stop
         self._ebrake_pub = self.create_publisher(AckermannDriveStamped, "/ebrake", 10)
@@ -69,6 +86,8 @@ class RecoveryNode(Node):
             zone_end=(self.zone_x_max, self.zone_y_max),
             servo_offset=servo_offset,
             servo_gain=servo_gain,
+            speed_to_erpm_gain=speed_to_erpm_gain,
+            wheel_radius=wheel_radius,
         )
 
         # Observation builder
@@ -100,6 +119,9 @@ class RecoveryNode(Node):
     def _imu_cb(self, msg: Imu):
         self._latest_imu = msg
 
+    def _vesc_state_cb(self, msg: VescStateStamped):
+        self._latest_erpm = msg.state.speed
+
     def _servo_cb(self, msg: Float64):
         self._latest_servo_pos = msg.data
 
@@ -127,6 +149,10 @@ class RecoveryNode(Node):
         if self._latest_servo_pos is not None:
             delta = self._estimator.steering_angle(self._latest_servo_pos)
 
+        wheel_omega = 0.0
+        if self._latest_erpm is not None:
+            wheel_omega = self._estimator.wheel_omega(self._latest_erpm)
+
         obs = self._obs_builder.build(
             vx=0.0,
             vy=0.0,
@@ -135,12 +161,12 @@ class RecoveryNode(Node):
             ang_vel_z=ang_vel_z,
             delta=delta,
             beta=0.0,
-            wheel_omega=0.0,
+            wheel_omega=wheel_omega,
         )
 
         # --- Debug: publish raw (pre-normalization) values ---
         debug_msg = String()
-        debug_msg.data = f'{{"ang_vel_z": {ang_vel_z:.4f}, "delta": {delta:.4f}}}'
+        debug_msg.data = f'{{"ang_vel_z": {ang_vel_z:.4f}, "delta": {delta:.4f}, "wheel_omega": {wheel_omega:.4f}}}'
         self._debug_pub.publish(debug_msg)
 
         # Update pose from Vicon

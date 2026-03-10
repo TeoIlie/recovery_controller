@@ -27,15 +27,19 @@ class StateEstimator:
         zone_start: tuple[float, float],
         zone_end: tuple[float, float],
         servo_offset: float,
-        servo_gain: float
+        servo_gain: float,
+        speed_to_erpm_gain: float,
+        wheel_radius: float,
     ):
         """
         Parameters
         ----------
-        zone_start   : (x, y) of the entry end of the recovery zone centerline.
-        zone_end     : (x, y) of the exit end of the recovery zone centerline.
-        servo_offset : Servo center position (from vesc.yaml steering_angle_to_servo_offset).
-        servo_gain   : Servo gain (from vesc.yaml steering_angle_to_servo_gain).
+        zone_start          : (x, y) of the entry end of the recovery zone centerline.
+        zone_end            : (x, y) of the exit end of the recovery zone centerline.
+        servo_offset        : Servo center position (from vesc.yaml steering_angle_to_servo_offset).
+        servo_gain          : Servo gain (from vesc.yaml steering_angle_to_servo_gain).
+        speed_to_erpm_gain  : ERPM per m/s (from vesc.yaml speed_to_erpm_gain).
+        wheel_radius        : Wheel radius in metres.
         """
         dx = zone_end[0] - zone_start[0]
         dy = zone_end[1] - zone_start[1]
@@ -49,6 +53,8 @@ class StateEstimator:
         self.zone_start = zone_start
         self.servo_offset = servo_offset
         self.servo_gain = servo_gain
+        self.speed_to_erpm_gain = speed_to_erpm_gain
+        self.wheel_radius = wheel_radius
 
     def body_frame_velocity(
         self, world_vx: float, world_vy: float, yaw: float
@@ -84,11 +90,13 @@ class StateEstimator:
         """Convert VESC IMU gyro z from deg/s to rad/s."""
         return float(np.deg2rad(gyro_z_dps))
 
-    def wheel_omega(
-        self,
-        erpm: float,
-        speed_to_erpm_gain: float = 4600.0,
-        wheel_radius: float = 0.049,
-    ) -> float:
+    def wheel_omega(self, erpm: float) -> float:
         """Wheel angular velocity (rad/s) from signed ERPM."""
-        return abs(erpm) / (speed_to_erpm_gain * wheel_radius)
+        # we assume the car is never travelling backwards
+        if erpm <= 0:
+            return 0.0
+
+        # erpm= speed_to_erpm_gain * speed + speed_to_erpm_offset, but offset is 0
+        velocity = erpm / self.speed_to_erpm_gain
+        # angular_velocity = velocity / wheel_radius
+        return velocity / self.wheel_radius
