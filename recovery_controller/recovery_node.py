@@ -28,6 +28,7 @@ class RecoveryNode(Node):
         self.declare_parameter("zone_y_max", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("rate", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("debug", rclpy.Parameter.Type.BOOL)
+        self.declare_parameter("yaw_rate_source", rclpy.Parameter.Type.STRING)
         self.declare_parameter(
             "steering_angle_to_servo_gain", rclpy.Parameter.Type.DOUBLE
         )
@@ -45,6 +46,7 @@ class RecoveryNode(Node):
         self.zone_y_max = self.get_parameter("zone_y_max").value
         rate = self.get_parameter("rate").value
         self.debug = self.get_parameter("debug").value
+        self.yaw_rate_source = self.get_parameter("yaw_rate_source").value
         servo_gain = self.get_parameter("steering_angle_to_servo_gain").value
         servo_offset = self.get_parameter("steering_angle_to_servo_offset").value
         speed_to_erpm_gain = self.get_parameter("speed_to_erpm_gain").value
@@ -56,6 +58,12 @@ class RecoveryNode(Node):
         self._latest_imu = None
         self._latest_servo_pos = None
         self._latest_erpm = None
+
+        # validate yaw_rate_source set correctly
+        if self.yaw_rate_source not in ["imu", "vicon"]:
+            self.get_logger().warn(
+                f"yaw_rate_source {self.yaw_rate_source} not set correctly, defaulting to 'vicon' source"
+            )
 
         # Subscribe to Vicon pose and twist (VRPN client publishes BEST_EFFORT)
         vrpn_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -151,7 +159,7 @@ class RecoveryNode(Node):
         x = self._latest_pose.pose.position.x
         y = self._latest_pose.pose.position.y
         yaw = self._estimator.yaw_from_quaternion(q.x, q.y, q.z, q.w)
-        
+
         # TODO remove logging after testing
         # self.get_logger().info(f"yaw={yaw:.4f}", throttle_duration_sec=0.5)
 
@@ -170,9 +178,16 @@ class RecoveryNode(Node):
         # Sideslip
         beta = self._estimator.sideslip(vx, vy)
 
+        # get yaw rate from Vicon or IMU depending on config
         ang_vel_z = 0.0
-        if self._latest_imu is not None:
-            ang_vel_z = self._estimator.yaw_rate(self._latest_imu.angular_velocity.z)
+        if self.yaw_rate_source == "imu":
+            if self._latest_imu is not None:
+                ang_vel_z = self._estimator.yaw_rate(
+                    self._latest_imu.angular_velocity.z
+                )
+        else:
+            if self._latest_twist is not None:
+                ang_vel_z = self._latest_twist.twist.angular.z
 
         delta = 0.0
         if self._latest_servo_pos is not None:
