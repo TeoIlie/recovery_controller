@@ -125,15 +125,15 @@ class ObservationBuilder:
         raw[1] = vy  # linear_vel_y
         raw[2] = frenet_u  # frenet_u
         raw[3] = frenet_n  # frenet_n
-        raw[4] = ang_vel_z # yaw rate
-        raw[5] = delta # delta 
+        raw[4] = ang_vel_z  # yaw rate
+        raw[5] = delta  # delta
         raw[6] = beta  # beta
 
         # --- Action history (tracked internally) ---
-        raw[7] = self.prev_steering_cmd # prev_steering_cmd
-        raw[8] = self.prev_accl_cmd # prev_accl_cmd
+        raw[7] = self.prev_steering_cmd  # prev_steering_cmd
+        raw[8] = self.prev_accl_cmd  # prev_accl_cmd
         raw[9] = wheel_omega  # prev_avg_wheel_omega
-        raw[10] = self.curr_vel_cmd # curr_vel_cmd
+        raw[10] = self.curr_vel_cmd  # curr_vel_cmd
 
         # --- Fixed features (straight-line zone) ---
         raw[11:16] = 0.0  # lookahead curvatures (straight line = 0)
