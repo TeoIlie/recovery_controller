@@ -124,10 +124,10 @@ Normalization formula (from `utils.py:normalize_feature`):
 
 | Idx | Feature | Real-car source | Norm bounds | Status |
 |-----|---------|-----------------|-------------|--------|
-| 0 | `linear_vel_x` | Vicon twist → body frame vx | `[−5.0, 20.0]` | TESTING |
-| 1 | `linear_vel_y` | Vicon twist → body frame vy | `[−10.0, 10.0]` | TESTING |
-| 2 | `frenet_u` | `wrap(yaw − zone_heading, −π, π)` | `[−π, π]` | TESTING |
-| 3 | `frenet_n` | signed perp. distance to centerline | `[−1.1, 1.1]` | TESTING |
+| 0 | `linear_vel_x` | Vicon twist → body frame vx | `[−5.0, 20.0]` | DONE |
+| 1 | `linear_vel_y` | Vicon twist → body frame vy | `[−10.0, 10.0]` | DONE |
+| 2 | `frenet_u` | `wrap(yaw − zone_heading, −π, π)` | `[−π, π]` | DONE |
+| 3 | `frenet_n` | signed perp. distance to centerline | `[−1.1, 1.1]` | DONE |
 | 4 | `ang_vel_z` | `Imu.angular_velocity.z` (rad/s, direct) | `[−5.0, 5.0]` | DONE |
 | 5 | `delta` | VESC: `(servo_pos − 0.512) / (−0.673)` | `[−0.5, 0.5]` | DONE |
 | 6 | `beta` | `atan2(vy, vx)`; use 0 if `vx < 0.5 m/s` | `[−π/3, π/3]` | TESTING |

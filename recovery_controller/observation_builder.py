@@ -121,10 +121,10 @@ class ObservationBuilder:
         raw = np.zeros(OBS_DIM, dtype=np.float32)
 
         # --- Sensor-derived features (placeholder: 0.0) ---
-        raw[0] = 0.0  # linear_vel_x        — TODO: vx
-        raw[1] = 0.0  # linear_vel_y        — TODO: vy
-        raw[2] = 0.0  # frenet_u            — TODO: frenet_u
-        raw[3] = 0.0  # frenet_n            — TODO: frenet_n
+        raw[0] = vx  # linear_vel_x
+        raw[1] = vy  # linear_vel_y
+        raw[2] = frenet_u  # frenet_u
+        raw[3] = frenet_n  # frenet_n
         raw[4] = ang_vel_z
         raw[5] = delta
         raw[6] = 0.0  # beta                — TODO: beta
@@ -132,13 +132,13 @@ class ObservationBuilder:
         # --- Action history (tracked internally) ---
         raw[7] = 0.0  # prev_steering_cmd   — TODO: self.prev_steering_cmd
         raw[8] = 0.0  # prev_accl_cmd       — TODO: self.prev_accl_cmd
-        raw[9] = 0.0  # prev_avg_wheel_omega— TODO: wheel_omega
+        raw[9] = wheel_omega  # prev_avg_wheel_omega
         raw[10] = 0.0  # curr_vel_cmd        — TODO: self.curr_vel_cmd
 
         # --- Fixed features (straight-line zone) ---
         raw[11:16] = 0.0  # lookahead curvatures (straight line = 0)
-        raw[16] = self.zone_width  # lookahead_width[0]  — TODO: self.zone_width
-        raw[17] = self.zone_width  # lookahead_width[1]  — TODO: self.zone_width
+        raw[16] = self.zone_width  # lookahead_width[0]
+        raw[17] = self.zone_width  # lookahead_width[1]
 
         # --- Normalize ---
         obs = np.zeros(OBS_DIM, dtype=np.float32)

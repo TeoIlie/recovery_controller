@@ -25,8 +25,8 @@ class StateEstimator:
 
     def __init__(
         self,
-        zone_start: tuple[float, float],
-        zone_end: tuple[float, float],
+        zone_y_min: float,
+        zone_y_max: float,
         servo_offset: float,
         servo_gain: float,
         speed_to_erpm_gain: float,
@@ -35,23 +35,16 @@ class StateEstimator:
         """
         Parameters
         ----------
-        zone_start          : (x, y) of the entry end of the recovery zone centerline.
-        zone_end            : (x, y) of the exit end of the recovery zone centerline.
+        zone_y_min          : Minimum y coordinate of the recovery zone rectangle.
+        zone_y_max          : Maximum y coordinate of the recovery zone rectangle.
         servo_offset        : Servo center position (from vesc.yaml steering_angle_to_servo_offset).
         servo_gain          : Servo gain (from vesc.yaml steering_angle_to_servo_gain).
         speed_to_erpm_gain  : ERPM per m/s (from vesc.yaml speed_to_erpm_gain).
         wheel_radius        : Wheel radius in metres.
         """
-        dx = zone_end[0] - zone_start[0]
-        dy = zone_end[1] - zone_start[1]
-        self.zone_heading = math.atan2(dy, dx)
-        L = math.hypot(dx, dy)
-        # Unit tangent and normal (90° CCW = left)
-        self.ux = dx / L
-        self.uy = dy / L
-        self.nx = -self.uy
-        self.ny = self.ux
-        self.zone_start = zone_start
+        # The centerline runs along the x-axis at y = center_y.
+        # zone_heading = 0, tangent = (1,0), normal = (0,1).
+        self.center_y = (zone_y_min + zone_y_max) / 2.0
         self.servo_offset = servo_offset
         self.servo_gain = servo_gain
         self.speed_to_erpm_gain = speed_to_erpm_gain
@@ -74,14 +67,14 @@ class StateEstimator:
         vy = -world_vx * sin_y + world_vy * cos_y
         return vx, vy
 
-    def frenet_coords(
-        self, car_x: float, car_y: float, car_yaw: float
-    ) -> tuple[float, float]:
-        """Compute heading error (frenet_u) and lateral offset (frenet_n)."""
-        frenet_u = wrap_angle(car_yaw - self.zone_heading)
-        frenet_n = (car_x - self.zone_start[0]) * self.nx + (
-            car_y - self.zone_start[1]
-        ) * self.ny
+    def frenet_coords(self, car_y: float, car_yaw: float) -> tuple[float, float]:
+        """Compute heading error (frenet_u) and lateral offset (frenet_n).
+        Note the zone centerline runs along the x-axis (zone_heading = 0)
+        - frenet_u - a negative angle corresponds to CCW rotation about z from centerline
+        - frenet_n - a negative lateral distance corresponds to being right of centerline from car perspective
+        """
+        frenet_u = wrap_angle(car_yaw)
+        frenet_n = car_y - self.center_y
         return frenet_u, frenet_n
 
     def sideslip(self, vx: float, vy: float) -> float:

@@ -93,8 +93,8 @@ class RecoveryNode(Node):
 
         # State estimator
         self._estimator = StateEstimator(
-            zone_start=(self.zone_x_min, self.zone_y_min),
-            zone_end=(self.zone_x_max, self.zone_y_max),
+            zone_y_min=self.zone_y_min,
+            zone_y_max=self.zone_y_max,
             servo_offset=servo_offset,
             servo_gain=servo_gain,
             speed_to_erpm_gain=speed_to_erpm_gain,
@@ -173,7 +173,7 @@ class RecoveryNode(Node):
             )
 
         # Frenet coordinates (heading error + lateral offset)
-        frenet_u, frenet_n = self._estimator.frenet_coords(x, y, yaw)
+        frenet_u, frenet_n = self._estimator.frenet_coords(y, yaw)
 
         # Sideslip
         beta = self._estimator.sideslip(vx, vy)

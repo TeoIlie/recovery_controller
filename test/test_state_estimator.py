@@ -9,8 +9,8 @@ from recovery_controller.state_estimator import StateEstimator, wrap_angle
 @pytest.fixture
 def est():
     return StateEstimator(
-        zone_start=(0.0, 0.0),
-        zone_end=(4.0, 0.0),
+        zone_y_min=-1.0,
+        zone_y_max=1.0,
         servo_offset=0.512,
         servo_gain=-0.673,
         speed_to_erpm_gain=4600.0,
@@ -119,59 +119,57 @@ def test_body_vel_sideways(est):
     assert vy == pytest.approx(5.0, abs=1e-10)
 
 
-# --- frenet_coords (zone along +x axis) ---
+# --- frenet_coords (zone centerline along x-axis, center_y = 0.0) ---
 
 
 def test_frenet_on_centerline_aligned(est):
     """Car on centerline, facing along zone → heading error 0, offset 0."""
-    u, n = est.frenet_coords(2.0, 0.0, car_yaw=0.0)
+    u, n = est.frenet_coords(car_y=0.0, car_yaw=0.0)
     assert u == pytest.approx(0.0)
     assert n == pytest.approx(0.0)
 
 
 def test_frenet_offset_left(est):
-    """Car at y=0.5, zone along x-axis → offset = +0.5 (left)."""
-    u, n = est.frenet_coords(2.0, 0.5, car_yaw=0.0)
+    """Car at y=0.5, zone center at y=0 → offset = +0.5 (left)."""
+    u, n = est.frenet_coords(car_y=0.5, car_yaw=0.0)
     assert u == pytest.approx(0.0)
     assert n == pytest.approx(0.5)
 
 
 def test_frenet_offset_right(est):
     """Car at y=-0.3 → offset = -0.3 (right)."""
-    _, n = est.frenet_coords(2.0, -0.3, car_yaw=0.0)
+    _, n = est.frenet_coords(car_y=-0.3, car_yaw=0.0)
     assert n == pytest.approx(-0.3)
 
 
 def test_frenet_heading_error(est):
     """Car turned 0.2 rad left of zone heading."""
-    u, _ = est.frenet_coords(2.0, 0.0, car_yaw=0.2)
+    u, _ = est.frenet_coords(car_y=0.0, car_yaw=0.2)
     assert u == pytest.approx(0.2)
 
 
 def test_frenet_heading_wraps(est):
     """Heading error near ±pi wraps correctly."""
-    u, _ = est.frenet_coords(2.0, 0.0, car_yaw=math.pi - 0.1)
+    u, _ = est.frenet_coords(car_y=0.0, car_yaw=math.pi - 0.1)
     assert u == pytest.approx(math.pi - 0.1)
-    u2, _ = est.frenet_coords(2.0, 0.0, car_yaw=-(math.pi - 0.1))
+    u2, _ = est.frenet_coords(car_y=0.0, car_yaw=-(math.pi - 0.1))
     assert u2 == pytest.approx(-(math.pi - 0.1))
 
 
-# --- frenet_coords with angled zone ---
-
-
-def test_frenet_diagonal_zone():
-    """Zone at 45°: car on centerline facing along zone → 0, 0."""
+def test_frenet_offset_with_nonzero_center():
+    """Zone with center_y != 0: offset is relative to center."""
     est = StateEstimator(
-        zone_start=(0.0, 0.0),
-        zone_end=(1.0, 1.0),
+        zone_y_min=1.0,
+        zone_y_max=3.0,
         servo_offset=0.512,
         servo_gain=-0.673,
         speed_to_erpm_gain=4600.0,
         wheel_radius=0.049,
     )
-    u, n = est.frenet_coords(0.5, 0.5, car_yaw=math.pi / 4)
-    assert u == pytest.approx(0.0, abs=1e-10)
-    assert n == pytest.approx(0.0, abs=1e-10)
+    # center_y = 2.0, car at y=2.5 → offset = +0.5
+    u, n = est.frenet_coords(car_y=2.5, car_yaw=0.0)
+    assert u == pytest.approx(0.0)
+    assert n == pytest.approx(0.5)
 
 
 # --- sideslip ---
@@ -250,7 +248,7 @@ def test_body_vel_via_quaternion_lateral(est):
 def test_frenet_via_quaternion_aligned(est):
     """Car on centerline facing along zone, yaw from quaternion."""
     car_yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(0.0))
-    u, n = est.frenet_coords(2.0, 0.0, car_yaw)
+    u, n = est.frenet_coords(car_y=0.0, car_yaw=car_yaw)
     assert u == pytest.approx(0.0)
     assert n == pytest.approx(0.0)
 
@@ -258,22 +256,6 @@ def test_frenet_via_quaternion_aligned(est):
 def test_frenet_via_quaternion_heading_error(est):
     """Car turned 0.3 rad from zone heading, yaw from quaternion."""
     car_yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(0.3))
-    u, n = est.frenet_coords(2.0, 0.0, car_yaw)
+    u, n = est.frenet_coords(car_y=0.0, car_yaw=car_yaw)
     assert u == pytest.approx(0.3, abs=1e-6)
     assert n == pytest.approx(0.0)
-
-
-def test_frenet_via_quaternion_diagonal_zone():
-    """45° zone: car on centerline facing along zone, yaw from quaternion."""
-    est = StateEstimator(
-        zone_start=(0.0, 0.0),
-        zone_end=(1.0, 1.0),
-        servo_offset=0.512,
-        servo_gain=-0.673,
-        speed_to_erpm_gain=4600.0,
-        wheel_radius=0.049,
-    )
-    car_yaw = StateEstimator.yaw_from_quaternion(*_quat_from_yaw(math.pi / 4))
-    u, n = est.frenet_coords(0.5, 0.5, car_yaw)
-    assert u == pytest.approx(0.0, abs=1e-10)
-    assert n == pytest.approx(0.0, abs=1e-10)
