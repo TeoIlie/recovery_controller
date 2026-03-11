@@ -150,3 +150,19 @@ def test_step_clamps_vel_cmd_negative(builder):
     builder.step(action)
     # -4.99 + (-5.0)*0.01 = -5.04 → clamped to -5.0
     assert builder.curr_vel_cmd == pytest.approx(-5.0)
+
+
+def test_build_uses_action_state_after_step(builder):
+    """build() must reflect internal state set by reset() and step()."""
+    builder.reset(5.0)
+    action = np.array([0.5, -0.3])  # accl_norm=0.5, steer_norm=-0.3
+    builder.step(action)
+
+    obs = builder.build(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    # prev_steering_cmd = -0.3, bounds [-1, 1]
+    assert obs[7] == pytest.approx(normalize(-0.3, -1.0, 1.0), abs=1e-5)
+    # prev_accl_cmd = 2.5 m/s², bounds [-5, 5]
+    assert obs[8] == pytest.approx(normalize(2.5, -5.0, 5.0), abs=1e-5)
+    # curr_vel_cmd = 5.0 + 2.5*0.01 = 5.025, bounds [-5, 20]
+    assert obs[10] == pytest.approx(normalize(5.025, -5.0, 20.0), abs=1e-5)

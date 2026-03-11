@@ -130,7 +130,7 @@ Normalization formula (from `utils.py:normalize_feature`):
 | 3 | `frenet_n` | signed perp. distance to centerline | `[−1.1, 1.1]` | DONE |
 | 4 | `ang_vel_z` | `Imu.angular_velocity.z` (rad/s, direct) | `[−5.0, 5.0]` | DONE |
 | 5 | `delta` | VESC: `(servo_pos − 0.512) / (−0.673)` | `[−0.5, 0.5]` | DONE |
-| 6 | `beta` | `atan2(vy, vx)`; use 0 if `vx < 0.5 m/s` | `[−π/3, π/3]` | TESTING |
+| 6 | `beta` | `atan2(vy, vx)`; use 0 if `vx < 0.5 m/s` | `[−π/3, π/3]` | DONE |
 | 7 | `prev_steering_cmd` | last raw `action[1]` from network (`[−1, 1]`) | `[−1.0, 1.0]` | |
 | 8 | `prev_accl_cmd` | last `action[0] × a_max` (m/s², denorm.) | `[−5.0, 5.0]` | |
 | 9 | `prev_avg_wheel_omega` | `ERPM / (4600 × 0.049)` (rad/s) | `[0.0, 2612.24]` | DONE |
