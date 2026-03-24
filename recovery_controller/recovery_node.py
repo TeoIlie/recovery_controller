@@ -208,7 +208,9 @@ class RecoveryNode(Node):
 
     def _in_ebrake_zone(self, x: float, y: float) -> bool:
         """Vehicle is in safety ebrake zone"""
-        return (x >= self.zone_x_max or y <= self.zone_y_min or y >= self.zone_y_max) and x >= self.zone_x_min
+        return (
+            x >= self.zone_x_max or y <= self.zone_y_min or y >= self.zone_y_max
+        ) and x >= self.zone_x_min
 
     def _in_drive_zone(self, x: float, y: float) -> bool:
         """Vehicle is in autonomous drive zone"""
@@ -323,7 +325,9 @@ class RecoveryNode(Node):
                 if self._controller_type == "learned":
                     self.get_logger().info(f"Observation: {obs}")
                 else:
-                    self.get_logger().info(f"vx: {vx}, frenet_u: {frenet_u}, frenet_n: {frenet_n}")
+                    self.get_logger().info(
+                        f"vx: {vx}, frenet_u: {frenet_u}, frenet_n: {frenet_n}"
+                    )
                 self.get_logger().info(
                     f"Control command: Speed: {speed}, Steer angle: {steering_angle}"
                 )
