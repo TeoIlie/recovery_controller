@@ -97,10 +97,23 @@ IDLE ─[arm]─► ARMED ─[crosses entry line]─► ACTIVE
 
 **On activation**: initialize `curr_vel_cmd` to current VESC speed (`ERPM / speed_to_erpm_gain`).
 
-**Timing**: The node runs at 100 Hz (dt = 0.01 s, matching the sim timestep). VESC data arrives at
-~50 Hz, so every other tick will use stale VESC data for `wheel_omega` and `delta`. This is acceptable
-since those signals change slowly relative to 100 Hz; Vicon position (the primary state input) updates
-every tick at 100–200 Hz.
+**Timing**: The node **must** run at 100 Hz (dt = 0.01 s) to match the simulator training timestep.
+This rate is critical for three reasons:
+
+1. **`curr_vel_cmd` integration fidelity**: The velocity command is integrated each tick as
+   `curr_vel_cmd += action[0] * a_max * dt`. Running at a different rate while keeping `dt = 0.01`
+   causes the integrated velocity to drift from what the policy expects. Adjusting `dt` to match a
+   different rate changes the temporal dynamics the policy learned — either way breaks sim-to-real
+   correspondence.
+2. **Temporal meaning of "previous" observations**: `prev_steering_cmd` and `prev_accl_cmd` represent
+   "one step ago" — the policy learned their meaning at 100 Hz temporal spacing.
+3. **Sensor alignment**: Vicon delivers at 100–200 Hz, so 100 Hz gives fresh pose data nearly every
+   tick. VESC at ~50 Hz means every other tick reuses stale `wheel_omega`/`delta`, but those signals
+   change slowly relative to 100 Hz.
+
+**Implementation**: Use a ROS2 timer (`self.create_timer(0.01, self.control_callback)`) rather than
+spinning as fast as possible. Timer jitter on the order of 1–2 ms is acceptable — the policy is robust
+to small timing variations since the sim itself isn't perfectly periodic.
 
 ---
 
