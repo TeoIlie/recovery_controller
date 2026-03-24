@@ -1,3 +1,4 @@
+import yaml
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -7,7 +8,11 @@ from std_msgs.msg import Float64, String
 from ackermann_msgs.msg import AckermannDriveStamped
 from vesc_msgs.msg import VescStateStamped
 from recovery_controller.state_estimator import StateEstimator
-from recovery_controller.observation_builder import ObservationBuilder
+from recovery_controller.observation_builder import (
+    ObservationBuilder,
+    parse_norm_bounds,
+)
+from recovery_controller.policy_runner import PolicyRunner
 
 
 class RecoveryNode(Node):
@@ -37,6 +42,8 @@ class RecoveryNode(Node):
         )
         self.declare_parameter("speed_to_erpm_gain", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("wheel_radius", rclpy.Parameter.Type.DOUBLE)
+        self.declare_parameter("model_path", rclpy.Parameter.Type.STRING)
+        self.declare_parameter("norm_bounds_path", rclpy.Parameter.Type.STRING)
 
         # Read parameters
         body_name = self.get_parameter("vicon_body_name").value
@@ -49,8 +56,24 @@ class RecoveryNode(Node):
         self.yaw_rate_source = self.get_parameter("yaw_rate_source").value
         servo_gain = self.get_parameter("steering_angle_to_servo_gain").value
         servo_offset = self.get_parameter("steering_angle_to_servo_offset").value
-        speed_to_erpm_gain = self.get_parameter("speed_to_erpm_gain").value
+        self._speed_to_erpm_gain = self.get_parameter("speed_to_erpm_gain").value
         wheel_radius = self.get_parameter("wheel_radius").value
+        model_path = self.get_parameter("model_path").value
+        norm_bounds_path = self.get_parameter("norm_bounds_path").value
+
+        # Load norm bounds from YAML file (output by simulator training script)
+        with open(norm_bounds_path, "r") as f:
+            norm_bounds = parse_norm_bounds(yaml.safe_load(f))
+        self.get_logger().info(f"Loaded norm bounds from {norm_bounds_path}")
+
+        if self.debug:
+            self.get_logger().info(f"Normalized bounds from yaml:{norm_bounds}")
+
+        # Derive s_max from norm_bounds (single source of truth)
+        s_max = norm_bounds["delta"][1]
+
+        # Activation flag — True while policy is running inside the drive zone
+        self._autonomy_active = False
 
         # Latest sensor data (None until first message arrives)
         self._latest_pose = None
@@ -97,19 +120,21 @@ class RecoveryNode(Node):
             zone_y_max=self.zone_y_max,
             servo_offset=servo_offset,
             servo_gain=servo_gain,
-            speed_to_erpm_gain=speed_to_erpm_gain,
+            speed_to_erpm_gain=self._speed_to_erpm_gain,
             wheel_radius=wheel_radius,
         )
 
         # Observation builder
         zone_width = self.zone_y_max - self.zone_y_min
         self._obs_builder = ObservationBuilder(
+            norm_bounds=norm_bounds,
             zone_width=zone_width,
-            a_max=5.0,
-            v_min=-5.0,
-            v_max=20.0,
             dt=1.0 / rate,
         )
+
+        # Policy runner (ONNX model)
+        self._policy = PolicyRunner(model_path, s_max=s_max)
+        self.get_logger().info(f"Loaded ONNX policy model from {model_path}")
 
         # Debug publisher — raw (pre-normalization) observation values as JSON
         self._debug_pub = self.create_publisher(String, "/recovery/debug_obs", 10)
@@ -159,9 +184,6 @@ class RecoveryNode(Node):
         x = self._latest_pose.pose.position.x
         y = self._latest_pose.pose.position.y
         yaw = self._estimator.yaw_from_quaternion(q.x, q.y, q.z, q.w)
-
-        # TODO remove logging after testing
-        # self.get_logger().info(f"yaw={yaw:.4f}", throttle_duration_sec=0.5)
 
         # Body-frame velocity from Vicon twist
         vx, vy = 0.0, 0.0
@@ -225,7 +247,7 @@ class RecoveryNode(Node):
 
         if not self.debug:
             if self._in_ebrake_zone(x, y):
-                # if in ebrake zone, publish 0 speed command on /ebrake topic
+                self._autonomy_active = False
                 self.get_logger().warn(
                     f"Outside safety zone at ({x:.2f}, {y:.2f}) — e-braking",
                     throttle_duration_sec=0.5,
@@ -237,20 +259,34 @@ class RecoveryNode(Node):
                 self._ebrake_pub.publish(msg)
 
             elif self._in_drive_zone(x, y):
-                # if in autonomous drive zone, publish autonomous drive command on /drive topic
-                # TODO replace with actual autonomous drive command
-                self.get_logger().info(
-                    f"Autonomous recovery control active",
-                    throttle_duration_sec=0.5,
-                )
-                # TODO replace placeholder code with autonomous driving command
+                # On first tick in zone: capture initial speed and reset obs builder
+                if not self._autonomy_active:
+                    self._obs_builder.reset(vx)
+                    self._autonomy_active = True
+                    self.get_logger().info(
+                        f"Recovery activated — initial speed {vx:.2f} m/s"
+                    )
+
+                # Policy inference
+                raw_accl, raw_steer = self._policy.predict(obs)
+
+                # Update obs builder internal state (prev_cmds + curr_vel_cmd integration)
+                self._obs_builder.step(raw_accl, raw_steer)
+
+                # Denormalize action for AckermannDriveStamped
+                steering_angle = self._policy.denorm_steering(raw_steer)
+                speed = self._obs_builder.curr_vel_cmd
+
                 msg = AckermannDriveStamped()
                 msg.header.stamp = self.get_clock().now().to_msg()
-                msg.drive.speed = 0.5
-                msg.drive.steering_angle = 0.0
+                msg.drive.speed = float(speed)
+                msg.drive.steering_angle = float(steering_angle)
+
                 self._drive_pub.publish(msg)
 
-            # else, teleop takes precedence
+            else:
+                # Outside both zones (teleop region) — deactivate
+                self._autonomy_active = False
 
 
 def main(args=None):

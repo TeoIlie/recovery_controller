@@ -1,46 +1,63 @@
 """Pure Python observation builder — no ROS2 dependencies, unit-testable.
 
-Constructs the 18-element normalized observation vector expected by the
-trained PPO recovery policy.  See SIM_TO_REAL_IMPL.md §Observation Vector
-for the full specification.
+Constructs the normalized observation vector expected by the trained PPO
+recovery policy.  See SIM_TO_REAL_IMPL.md §Observation Vector for the full
+specification.
 """
 
 import numpy as np
 
+# Canonical feature order — defines the mapping from feature names to
+# obs-vector indices.  Must match the order the policy was trained with.
+FEATURE_ORDER: list[str] = [
+    "linear_vel_x",  #  0
+    "linear_vel_y",  #  1
+    "frenet_u",  #  2
+    "frenet_n",  #  3
+    "ang_vel_z",  #  4
+    "delta",  #  5
+    "beta",  #  6
+    "prev_steering_cmd",  #  7
+    "prev_accl_cmd",  #  8
+    "prev_avg_wheel_omega",  #  9
+    "curr_vel_cmd",  # 10
+    "lookahead_curvatures",  # 11
+    "lookahead_curvatures",  # 12
+    "lookahead_curvatures",  # 13
+    "lookahead_curvatures",  # 14
+    "lookahead_curvatures",  # 15
+    "lookahead_widths",  # 16
+    "lookahead_widths",  # 17
+]
+
 
 def normalize(value: float, lo: float, hi: float) -> float:
     """Normalize to [-1, 1] matching sim's utils.py:normalize_feature."""
-    return float(np.clip(2.0 * (value - lo) / (hi - lo) - 1.0, -1.0, 1.0))
+    range_val = hi - lo
+    if np.isclose(range_val, 0.0, atol=1e-9):
+        return 0.0
+    return float(np.clip(2.0 * (value - lo) / range_val - 1.0, -1.0, 1.0))
 
 
-# Normalization bounds — must match training config exactly.
-# TODO update, or make readable from config file
-NORM_BOUNDS: list[tuple[float, float]] = [
-    (-5.0, 20.0),  # 0  linear_vel_x
-    (-10.0, 10.0),  # 1  linear_vel_y
-    (-np.pi, np.pi),  # 2  frenet_u  (heading error)
-    (-1.1, 1.1),  # 3  frenet_n  (lateral offset)
-    (-5.0, 5.0),  # 4  ang_vel_z
-    (-0.5, 0.5),  # 5  delta  (steering angle)
-    (-np.pi / 3, np.pi / 3),  # 6  beta  (sideslip)
-    (-1.0, 1.0),  # 7  prev_steering_cmd  (raw network output)
-    (-5.0, 5.0),  # 8  prev_accl_cmd  (denorm m/s²)
-    (0.0, 2612.24),  # 9  prev_avg_wheel_omega
-    (-5.0, 20.0),  # 10 curr_vel_cmd
-    (-1.95, 1.95),  # 11 lookahead_curvature[0]
-    (-1.95, 1.95),  # 12 lookahead_curvature[1]
-    (-1.95, 1.95),  # 13 lookahead_curvature[2]
-    (-1.95, 1.95),  # 14 lookahead_curvature[3]
-    (-1.95, 1.95),  # 15 lookahead_curvature[4]
-    (1.2, 2.2),  # 16 lookahead_width[0]  (sparse)
-    (1.2, 2.2),  # 17 lookahead_width[1]  (sparse)
-]
+def parse_norm_bounds(raw: dict[str, dict]) -> dict[str, tuple[float, float]]:
+    """Parse a norm bounds YAML dict into {name: (min, max)} tuples"""
+    bounds = {}
+    for name, entry in raw.items():
+        bounds[name] = (float(entry["min"]), float(entry["max"]))
 
-OBS_DIM = 18
+    # Validate all required features are present
+    required = set(FEATURE_ORDER)
+    missing = required - set(bounds.keys())
+    if missing:
+        raise ValueError(
+            f"norm_bounds YAML is missing required features: {sorted(missing)}"
+        )
+
+    return bounds
 
 
 class ObservationBuilder:
-    """Builds the 18-element normalized observation vector.
+    """Builds the normalized observation vector.
 
     Tracks internal action state (prev_steering_cmd, prev_accl_cmd,
     curr_vel_cmd) that updates each tick.  Call ``reset()`` when the
@@ -48,20 +65,25 @@ class ObservationBuilder:
 
     Parameters
     ----------
-    zone_width : Full width of the recovery zone (metres).
-    a_max      : Max acceleration (m/s²), from deployment config.
-    v_min, v_max : Speed clamp bounds (m/s).
-    dt         : Control timestep (s).
+    norm_bounds : Dict mapping feature name to (lo, hi) tuple.
+    zone_width  : Full width of the recovery zone (metres).
+    dt          : Control timestep (s).
     """
 
     def __init__(
-        self, zone_width: float, a_max: float, v_min: float, v_max: float, dt: float
+        self,
+        norm_bounds: dict[str, tuple[float, float]],
+        zone_width: float,
+        dt: float,
     ):
+        self.norm_bounds = norm_bounds
+        self.obs_dim = len(FEATURE_ORDER)
         self.zone_width = zone_width
-        self.a_max = a_max
-        self.v_min = v_min
-        self.v_max = v_max
         self.dt = dt
+
+        # Derive action bounds from norm_bounds (single source of truth)
+        self.v_min, self.v_max = norm_bounds["linear_vel_x"]
+        self.a_max = norm_bounds["prev_accl_cmd"][1]
 
         # Internal action state — set by reset() and updated by step()
         self.prev_steering_cmd = 0.0
@@ -79,15 +101,16 @@ class ObservationBuilder:
         self.prev_accl_cmd = 0.0
         self.curr_vel_cmd = initial_speed
 
-    def step(self, raw_action: np.ndarray) -> None:
+    def step(self, raw_accl: float, raw_steer: float) -> None:
         """Update internal action state after each inference tick.
 
         Parameters
         ----------
-        raw_action : [accl_norm, steer_norm] in [-1, 1] from policy.
+        raw_accl  : Normalized acceleration in [-1, 1] from policy.
+        raw_steer : Normalized steering in [-1, 1] from policy.
         """
-        self.prev_accl_cmd = float(raw_action[0]) * self.a_max
-        self.prev_steering_cmd = float(raw_action[1])
+        self.prev_accl_cmd = raw_accl * self.a_max
+        self.prev_steering_cmd = raw_steer
         self.curr_vel_cmd += self.prev_accl_cmd * self.dt
         self.curr_vel_cmd = float(np.clip(self.curr_vel_cmd, self.v_min, self.v_max))
 
@@ -102,7 +125,7 @@ class ObservationBuilder:
         beta: float,
         wheel_omega: float,
     ) -> np.ndarray:
-        """Construct the full 18-element normalized observation.
+        """Construct the full normalized observation.
 
         Parameters
         ----------
@@ -116,34 +139,27 @@ class ObservationBuilder:
 
         Returns
         -------
-        obs : np.ndarray of shape (18,), each element in [-1, 1].
+        obs : np.ndarray of shape (obs_dim,), each element in [-1, 1].
         """
-        raw = np.zeros(OBS_DIM, dtype=np.float32)
+        raw = {
+            "linear_vel_x": vx,
+            "linear_vel_y": vy,
+            "frenet_u": frenet_u,
+            "frenet_n": frenet_n,
+            "ang_vel_z": ang_vel_z,
+            "delta": delta,
+            "beta": beta,
+            "prev_steering_cmd": self.prev_steering_cmd,
+            "prev_accl_cmd": self.prev_accl_cmd,
+            "prev_avg_wheel_omega": wheel_omega,
+            "curr_vel_cmd": self.curr_vel_cmd,
+            "lookahead_curvatures": 0.0,  # straight-line zone
+            "lookahead_widths": self.zone_width,
+        }
 
-        # --- Sensor-derived features (placeholder: 0.0) ---
-        raw[0] = vx  # linear_vel_x
-        raw[1] = vy  # linear_vel_y
-        raw[2] = frenet_u  # frenet_u
-        raw[3] = frenet_n  # frenet_n
-        raw[4] = ang_vel_z  # yaw rate
-        raw[5] = delta  # delta
-        raw[6] = beta  # beta
-
-        # --- Action history (tracked internally) ---
-        raw[7] = self.prev_steering_cmd  # prev_steering_cmd
-        raw[8] = self.prev_accl_cmd  # prev_accl_cmd
-        raw[9] = wheel_omega  # prev_avg_wheel_omega
-        raw[10] = self.curr_vel_cmd  # curr_vel_cmd
-
-        # --- Fixed features (straight-line zone) ---
-        raw[11:16] = 0.0  # lookahead curvatures (straight line = 0)
-        raw[16] = self.zone_width  # lookahead_width[0]
-        raw[17] = self.zone_width  # lookahead_width[1]
-
-        # --- Normalize ---
-        obs = np.zeros(OBS_DIM, dtype=np.float32)
-        for i in range(OBS_DIM):
-            lo, hi = NORM_BOUNDS[i]
-            obs[i] = normalize(raw[i], lo, hi)
+        obs = np.zeros(self.obs_dim, dtype=np.float32)
+        for i, name in enumerate(FEATURE_ORDER):
+            lo, hi = self.norm_bounds[name]
+            obs[i] = normalize(raw[name], lo, hi)
 
         return obs

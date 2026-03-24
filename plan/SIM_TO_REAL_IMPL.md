@@ -356,6 +356,13 @@ control.
    a guide: `v: 5–9 m/s`, `beta: ±0.1 rad`, `r: ±0.2 rad/s` initially
 4. Record every trial as a ROS2 bag
 
+### Phase 5: Experiment setup
+
+When running experiments it is important to be able to record metrics to compare controllers. This includes:
+
+1. Recording the initial state (beta, r, v, heading error) at the moment autonomous control is initiated, as this will differ between runs based on manual control difference
+2. Record total time until vehicle reaches recovered state, along with trajectory follows for later plotting
+
 ---
 
 ## Key Risks and Mitigations

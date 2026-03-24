@@ -12,7 +12,6 @@ recovery_node:
     zone_x_max:  2.0
     zone_y_min: -1.1
     zone_y_max:  1.1
-
     # Node rate (Hz) — should match sim timestep (0.01 s)
     rate: 100.0
 
@@ -21,3 +20,10 @@ recovery_node:
 
     # yaw rate can come from source 'imu' or 'vicon'
     yaw_rate_source: "vicon"
+
+    # Path to trained DRL model (ONNX format)
+    model_path: "/home/jetson/f1tenth_ws/src/F1TENTH_System/recovery_controller/models/bwcm7l05/model.onnx"
+
+    # Path to normalization bounds YAML (output by simulator training script)
+    # Action bounds (a_max, v_min, v_max, s_max) are derived from these entries.
+    norm_bounds_path: "/home/jetson/f1tenth_ws/src/F1TENTH_System/recovery_controller/config/norm_bounds.yaml"

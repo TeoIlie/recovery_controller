@@ -1,0 +1,39 @@
+linear_vel_x:
+  min: -5.0
+  max: 20.0
+curr_vel_cmd:
+  min: -5.0
+  max: 20.0
+linear_vel_y:
+  min: -10.0
+  max: 10.0
+ang_vel_z:
+  min: -5.0
+  max: 5.0
+delta:
+  min: -0.5
+  max: 0.5
+prev_steering_cmd:
+  min: -1.0
+  max: 1.0
+prev_accl_cmd:
+  min: -7.0
+  max: 7.0
+prev_avg_wheel_omega:
+  min: 0.0
+  max: 2612.2448979591836
+frenet_u:
+  min: -3.141592653589793
+  max: 3.141592653589793
+beta:
+  min: -1.0471975511965976
+  max: 1.0471975511965976
+frenet_n:
+  min: -1.1
+  max: 1.1
+lookahead_widths:
+  min: 1.2
+  max: 2.2
+lookahead_curvatures:
+  min: -1.95
+  max: 1.95
