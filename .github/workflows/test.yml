@@ -18,7 +18,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pytest numpy transforms3d
+          pip install pytest numpy transforms3d onnxruntime
           pip install -e .
 
       - name: Run tests
