@@ -13,6 +13,7 @@ from recovery_controller.observation_builder import (
     parse_norm_bounds,
 )
 from recovery_controller.policy_runner import PolicyRunner
+from recovery_controller.stanley_controller import StanleyController
 
 
 class RecoveryNode(Node):
@@ -44,6 +45,10 @@ class RecoveryNode(Node):
         self.declare_parameter("wheel_radius", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("model_path", rclpy.Parameter.Type.STRING)
         self.declare_parameter("norm_bounds_path", rclpy.Parameter.Type.STRING)
+        self.declare_parameter("controller", rclpy.Parameter.Type.STRING)
+        self.declare_parameter("stanley_k", rclpy.Parameter.Type.DOUBLE)
+        self.declare_parameter("stanley_k_soft", rclpy.Parameter.Type.DOUBLE)
+        self.declare_parameter("stanley_k_heading", rclpy.Parameter.Type.DOUBLE)
 
         # Read parameters
         body_name = self.get_parameter("vicon_body_name").value
@@ -60,6 +65,15 @@ class RecoveryNode(Node):
         wheel_radius = self.get_parameter("wheel_radius").value
         model_path = self.get_parameter("model_path").value
         norm_bounds_path = self.get_parameter("norm_bounds_path").value
+        self._controller_type = self.get_parameter("controller").value
+
+        # Validate controller type
+        valid_controllers = ["learned", "stanley"]
+        if self._controller_type not in valid_controllers:
+            raise ValueError(
+                f"Invalid controller type '{self._controller_type}'. "
+                f"Must be one of {valid_controllers}"
+            )
 
         # Load norm bounds from YAML file (output by simulator training script)
         with open(norm_bounds_path, "r") as f:
@@ -132,9 +146,26 @@ class RecoveryNode(Node):
             dt=1.0 / rate,
         )
 
-        # Policy runner (ONNX model)
-        self._policy = PolicyRunner(model_path, s_max=s_max)
-        self.get_logger().info(f"Loaded ONNX policy model from {model_path}")
+        # Controller setup
+        self._stanley = None
+        self._policy = None
+        if self._controller_type == "learned":
+            self._policy = PolicyRunner(model_path, s_max=s_max)
+            self.get_logger().info(f"Loaded ONNX policy model from {model_path}")
+        else:
+            stanley_k = self.get_parameter("stanley_k").value
+            stanley_k_soft = self.get_parameter("stanley_k_soft").value
+            stanley_k_heading = self.get_parameter("stanley_k_heading").value
+            self._stanley = StanleyController(
+                k=stanley_k,
+                k_soft=stanley_k_soft,
+                k_heading=stanley_k_heading,
+                target_speed=0.0,
+            )
+            self.get_logger().info(
+                f"Stanley controller initialized (k={stanley_k}, "
+                f"k_soft={stanley_k_soft}, k_heading={stanley_k_heading})"
+            )
 
         # Debug publisher — raw (pre-normalization) observation values as JSON
         self._debug_pub = self.create_publisher(String, "/recovery/debug_obs", 10)
@@ -164,9 +195,20 @@ class RecoveryNode(Node):
     def _servo_cb(self, msg: Float64):
         self._latest_servo_pos = msg.data
 
+    def _compute_control(self, obs, vx, frenet_u, frenet_n):
+        """Return (speed, steering_angle) from the active controller."""
+        if self._controller_type == "learned":
+            raw_accl, raw_steer = self._policy.predict(obs)
+            self._obs_builder.step(raw_accl, raw_steer)
+            steering_angle = self._policy.denorm_steering(raw_steer)
+            speed = self._obs_builder.curr_vel_cmd
+        else:
+            speed, steering_angle = self._stanley.get_action(vx, frenet_u, frenet_n)
+        return speed, steering_angle
+
     def _in_ebrake_zone(self, x: float, y: float) -> bool:
         """Vehicle is in safety ebrake zone"""
-        return x >= self.zone_x_max or y <= self.zone_y_min or y >= self.zone_y_max
+        return (x >= self.zone_x_max or y <= self.zone_y_min or y >= self.zone_y_max) and x >= self.zone_x_min
 
     def _in_drive_zone(self, x: float, y: float) -> bool:
         """Vehicle is in autonomous drive zone"""
@@ -259,28 +301,32 @@ class RecoveryNode(Node):
                 self._ebrake_pub.publish(msg)
 
             elif self._in_drive_zone(x, y):
-                # On first tick in zone: capture initial speed and reset obs builder
+                # On first tick in zone: capture initial speed and reset obs builder, stanley target speed
                 if not self._autonomy_active:
                     self._obs_builder.reset(vx)
+                    if self._stanley is not None:
+                        self._stanley.set_target_speed(vx)
                     self._autonomy_active = True
                     self.get_logger().info(
                         f"Recovery activated — initial speed {vx:.2f} m/s"
                     )
 
-                # Policy inference
-                raw_accl, raw_steer = self._policy.predict(obs)
-
-                # Update obs builder internal state (prev_cmds + curr_vel_cmd integration)
-                self._obs_builder.step(raw_accl, raw_steer)
-
-                # Denormalize action for AckermannDriveStamped
-                steering_angle = self._policy.denorm_steering(raw_steer)
-                speed = self._obs_builder.curr_vel_cmd
+                speed, steering_angle = self._compute_control(
+                    obs, vx, frenet_u, frenet_n
+                )
 
                 msg = AckermannDriveStamped()
                 msg.header.stamp = self.get_clock().now().to_msg()
                 msg.drive.speed = float(speed)
                 msg.drive.steering_angle = float(steering_angle)
+
+                if self._controller_type == "learned":
+                    self.get_logger().info(f"Observation: {obs}")
+                else:
+                    self.get_logger().info(f"vx: {vx}, frenet_u: {frenet_u}, frenet_n: {frenet_n}")
+                self.get_logger().info(
+                    f"Control command: Speed: {speed}, Steer angle: {steering_angle}"
+                )
 
                 self._drive_pub.publish(msg)
 

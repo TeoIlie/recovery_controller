@@ -21,6 +21,14 @@ recovery_node:
     # yaw rate can come from source 'imu' or 'vicon'
     yaw_rate_source: "vicon"
 
+    # Controller type: "learned" (ONNX RL policy) or "stanley" (classical)
+    controller: "learned"
+
+    # Stanley controller gains (only used when controller: "stanley")
+    stanley_k: 0.1           # Cross-track gain
+    stanley_k_soft: 0.1      # Velocity softening constant [m/s]
+    stanley_k_heading: 1.0   # Heading error gain
+
     # Path to trained DRL model (ONNX format)
     model_path: "/home/jetson/f1tenth_ws/src/F1TENTH_System/recovery_controller/models/bwcm7l05/model.onnx"
 
