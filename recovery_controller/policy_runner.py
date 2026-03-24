@@ -16,7 +16,7 @@ class PolicyRunner:
     """
 
     def __init__(self, model_path: str, s_max: float = 0.5):
-        providers = ["CPUExecutionProvider"]
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         self.session = ort.InferenceSession(model_path, providers=providers)
         self.s_max = s_max
 
