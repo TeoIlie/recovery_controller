@@ -13,7 +13,7 @@ def est():
         zone_y_max=1.0,
         servo_offset=0.512,
         servo_gain=-0.673,
-        speed_to_erpm_gain=4600.0,
+        speed_to_erpm_gain=4000.0,
         wheel_radius=0.049,
     )
 
@@ -86,7 +86,7 @@ def test_wheel_omega_zero(est):
 
 
 def test_wheel_omega_positive(est):
-    # ERPM=4600*0.049 = 225.4 → omega = 225.4 / 225.4 = 1.0
+    # ERPM=4000*0.049 = 225.4 → omega = 225.4 / 225.4 = 1.0
     assert est.wheel_omega(225.4) == pytest.approx(1.0, abs=1e-3)
 
 
@@ -163,7 +163,7 @@ def test_frenet_offset_with_nonzero_center():
         zone_y_max=3.0,
         servo_offset=0.512,
         servo_gain=-0.673,
-        speed_to_erpm_gain=4600.0,
+        speed_to_erpm_gain=4000.0,
         wheel_radius=0.049,
     )
     # center_y = 2.0, car at y=2.5 → offset = +0.5

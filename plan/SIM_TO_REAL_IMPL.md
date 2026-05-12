@@ -146,7 +146,7 @@ Normalization formula (from `utils.py:normalize_feature`):
 | 6 | `beta` | `atan2(vy, vx)`; use 0 if `vx < 0.5 m/s` | `[−π/3, π/3]` | DONE |
 | 7 | `prev_steering_cmd` | last raw `action[1]` from network (`[−1, 1]`) | `[−1.0, 1.0]` | |
 | 8 | `prev_accl_cmd` | last `action[0] × a_max` (m/s², denorm.) | `[−5.0, 5.0]` | |
-| 9 | `prev_avg_wheel_omega` | `ERPM / (4600 × 0.049)` (rad/s) | `[0.0, 2612.24]` | DONE |
+| 9 | `prev_avg_wheel_omega` | `ERPM / (4000 × 0.049)` (rad/s) | `[0.0, 2612.24]` | DONE |
 | 10 | `curr_vel_cmd` | integrated (see below) | `[−5.0, 20.0]` | |
 | 11–15 | `lookahead_curvatures` ×5 | `[0, 0, 0, 0, 0]` (straight line) | `[−1.95, 1.95]` | DONE |
 | 16–17 | `lookahead_widths` ×2 (sparse) | `[zone_full_width, zone_full_width]` | `[1.2, 2.2]` | DONE |
@@ -191,7 +191,7 @@ Alternative: track last commanded `action[1] × s_max` to avoid servo feedback l
 **Wheel angular velocity from VESC ERPM**:
 
 ```
-omega_wheel = ERPM / (speed_to_erpm_gain × R_w) = ERPM / (4600 × 0.049) = ERPM / 225.4
+omega_wheel = ERPM / (speed_to_erpm_gain × R_w) = ERPM / (4000 × 0.049) = ERPM / 225.4
 ```
 
 `VescState.speed` is signed ERPM — take `abs()` since norm bounds are `[0, 2612.24]`.
