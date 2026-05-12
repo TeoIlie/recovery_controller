@@ -93,7 +93,7 @@ def read_bag(bag_dir: str) -> dict[str, list[tuple[float, object]]]:
 # VESC config values (from vesc.yaml)
 SERVO_OFFSET = 0.512
 SERVO_GAIN = -0.673
-SPEED_TO_ERPM_GAIN = 4000.0
+SPEED_TO_ERPM_GAIN = 4600.0
 WHEEL_RADIUS = 0.049
 
 # Zone config (from recovery.yaml)
