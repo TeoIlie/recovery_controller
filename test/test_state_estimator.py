@@ -14,7 +14,7 @@ def est():
         servo_offset=0.512,
         servo_gain=-0.673,
         speed_to_erpm_gain=4600.0,
-        wheel_radius=0.049,
+        sim_wheel_radius=0.0434,
     )
 
 
@@ -86,8 +86,16 @@ def test_wheel_omega_zero(est):
 
 
 def test_wheel_omega_positive(est):
-    # ERPM=4600*0.049 = 225.4 → omega = 225.4 / 225.4 = 1.0
-    assert est.wheel_omega(225.4) == pytest.approx(1.0, abs=1e-3)
+    # ERPM=4600*0.0434=199.64 → velocity=0.0434 m/s → omega=0.0434/0.0434=1.0 rad/s
+    assert est.wheel_omega(199.64) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_wheel_omega_uses_sim_radius(est):
+    """At v_max=20 m/s (erpm=92000), omega should match sim's v/R_w_sim = 460.8 rad/s.
+
+    Guards against accidental reversion to the physical wheel radius.
+    """
+    assert est.wheel_omega(20.0 * 4600.0) == pytest.approx(20.0 / 0.0434, rel=1e-3)
 
 
 def test_wheel_omega_negative_erpm(est):
@@ -164,7 +172,7 @@ def test_frenet_offset_with_nonzero_center():
         servo_offset=0.512,
         servo_gain=-0.673,
         speed_to_erpm_gain=4600.0,
-        wheel_radius=0.049,
+        sim_wheel_radius=0.0434,
     )
     # center_y = 2.0, car at y=2.5 → offset = +0.5
     u, n = est.frenet_coords(car_y=2.5, car_yaw=0.0)

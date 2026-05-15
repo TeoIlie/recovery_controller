@@ -42,10 +42,11 @@ class RecoveryNode(Node):
             "steering_angle_to_servo_offset", rclpy.Parameter.Type.DOUBLE
         )
         self.declare_parameter("speed_to_erpm_gain", rclpy.Parameter.Type.DOUBLE)
-        self.declare_parameter("wheel_radius", rclpy.Parameter.Type.DOUBLE)
+        self.declare_parameter("sim_wheel_radius", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("model_path", rclpy.Parameter.Type.STRING)
         self.declare_parameter("norm_bounds_path", rclpy.Parameter.Type.STRING)
         self.declare_parameter("controller", rclpy.Parameter.Type.STRING)
+        self.declare_parameter("s_max", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("stanley_k", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("stanley_k_soft", rclpy.Parameter.Type.DOUBLE)
         self.declare_parameter("stanley_k_heading", rclpy.Parameter.Type.DOUBLE)
@@ -62,7 +63,7 @@ class RecoveryNode(Node):
         servo_gain = self.get_parameter("steering_angle_to_servo_gain").value
         servo_offset = self.get_parameter("steering_angle_to_servo_offset").value
         self._speed_to_erpm_gain = self.get_parameter("speed_to_erpm_gain").value
-        wheel_radius = self.get_parameter("wheel_radius").value
+        sim_wheel_radius = self.get_parameter("sim_wheel_radius").value
         model_path = self.get_parameter("model_path").value
         norm_bounds_path = self.get_parameter("norm_bounds_path").value
         self._controller_type = self.get_parameter("controller").value
@@ -83,8 +84,9 @@ class RecoveryNode(Node):
         if self.debug:
             self.get_logger().info(f"Normalized bounds from yaml:{norm_bounds}")
 
-        # Derive s_max from norm_bounds (single source of truth)
-        s_max = norm_bounds["delta"][1]
+        # Action bounds: s_max from yaml; v_min/v_max from linear_vel_x.
+        s_max = self.get_parameter("s_max").value
+        v_min, v_max = norm_bounds["linear_vel_x"]
 
         # Activation flag — True while policy is running inside the drive zone
         self._autonomy_active = False
@@ -135,7 +137,7 @@ class RecoveryNode(Node):
             servo_offset=servo_offset,
             servo_gain=servo_gain,
             speed_to_erpm_gain=self._speed_to_erpm_gain,
-            wheel_radius=wheel_radius,
+            sim_wheel_radius=sim_wheel_radius,
         )
 
         # Observation builder
@@ -150,7 +152,15 @@ class RecoveryNode(Node):
         self._stanley = None
         self._policy = None
         if self._controller_type == "learned":
-            self._policy = PolicyRunner(model_path, s_max=s_max)
+            self._policy = PolicyRunner(
+                model_path, s_max=s_max, v_min=v_min, v_max=v_max
+            )
+            model_dim = self._policy.session.get_inputs()[0].shape[-1]
+            if model_dim != self._obs_builder.obs_dim:
+                raise ValueError(
+                    f"ONNX model expects obs dim {model_dim}, "
+                    f"recovery_controller builds {self._obs_builder.obs_dim}"
+                )
             self.get_logger().info(f"Loaded ONNX policy model from {model_path}")
         else:
             stanley_k = self.get_parameter("stanley_k").value
@@ -198,10 +208,9 @@ class RecoveryNode(Node):
     def _compute_control(self, obs, vx, frenet_u, frenet_n):
         """Return (speed, steering_angle) from the active controller."""
         if self._controller_type == "learned":
-            raw_accl, raw_steer = self._policy.predict(obs)
-            self._obs_builder.step(raw_accl, raw_steer)
+            raw_steer, raw_speed = self._policy.predict(obs)
             steering_angle = self._policy.denorm_steering(raw_steer)
-            speed = self._obs_builder.curr_vel_cmd
+            speed = self._policy.denorm_speed(raw_speed)
         else:
             speed, steering_angle = self._stanley.get_action(vx, frenet_u, frenet_n)
         return speed, steering_angle
@@ -220,7 +229,14 @@ class RecoveryNode(Node):
         )
 
     def _tick(self):
-        if self._latest_pose is None:
+        # Wait until all sensors used by the obs have produced at least one
+        # message — otherwise the obs would include zero defaults the policy
+        # never saw during training.
+        if (
+            self._latest_pose is None
+            or self._latest_twist is None
+            or self._latest_erpm is None
+        ):
             return
 
         # --- Compute observation features ---
@@ -230,13 +246,11 @@ class RecoveryNode(Node):
         yaw = self._estimator.yaw_from_quaternion(q.x, q.y, q.z, q.w)
 
         # Body-frame velocity from Vicon twist
-        vx, vy = 0.0, 0.0
-        if self._latest_twist is not None:
-            vx, vy = self._estimator.body_frame_velocity(
-                self._latest_twist.twist.linear.x,
-                self._latest_twist.twist.linear.y,
-                yaw,
-            )
+        vx, vy = self._estimator.body_frame_velocity(
+            self._latest_twist.twist.linear.x,
+            self._latest_twist.twist.linear.y,
+            yaw,
+        )
 
         # Frenet coordinates (heading error + lateral offset)
         frenet_u, frenet_n = self._estimator.frenet_coords(y, yaw)
@@ -245,23 +259,20 @@ class RecoveryNode(Node):
         beta = self._estimator.sideslip(vx, vy)
 
         # get yaw rate from Vicon or IMU depending on config
-        ang_vel_z = 0.0
         if self.yaw_rate_source == "imu":
-            if self._latest_imu is not None:
-                ang_vel_z = self._estimator.yaw_rate(
-                    self._latest_imu.angular_velocity.z
-                )
+            ang_vel_z = (
+                self._estimator.yaw_rate(self._latest_imu.angular_velocity.z)
+                if self._latest_imu is not None
+                else 0.0
+            )
         else:
-            if self._latest_twist is not None:
-                ang_vel_z = self._latest_twist.twist.angular.z
+            ang_vel_z = self._latest_twist.twist.angular.z
 
         delta = 0.0
         if self._latest_servo_pos is not None:
             delta = self._estimator.steering_angle(self._latest_servo_pos)
 
-        wheel_omega = 0.0
-        if self._latest_erpm is not None:
-            wheel_omega = self._estimator.wheel_omega(self._latest_erpm)
+        wheel_omega = self._estimator.wheel_omega(self._latest_erpm)
 
         obs = self._obs_builder.build(
             vx=vx,
@@ -269,9 +280,8 @@ class RecoveryNode(Node):
             frenet_u=frenet_u,
             frenet_n=frenet_n,
             ang_vel_z=ang_vel_z,
-            delta=delta,
             beta=beta,
-            wheel_omega=wheel_omega,
+            curr_avg_wheel_omega=wheel_omega,
         )
 
         # --- Debug: publish raw (pre-normalization) values ---
@@ -303,9 +313,8 @@ class RecoveryNode(Node):
                 self._ebrake_pub.publish(msg)
 
             elif self._in_drive_zone(x, y):
-                # On first tick in zone: capture initial speed and reset obs builder, stanley target speed
+                # On first tick in zone: capture initial speed for stanley.
                 if not self._autonomy_active:
-                    self._obs_builder.reset(vx)
                     if self._stanley is not None:
                         self._stanley.set_target_speed(vx)
                     self._autonomy_active = True

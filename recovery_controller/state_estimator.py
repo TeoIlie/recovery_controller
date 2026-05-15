@@ -30,7 +30,7 @@ class StateEstimator:
         servo_offset: float,
         servo_gain: float,
         speed_to_erpm_gain: float,
-        wheel_radius: float,
+        sim_wheel_radius: float,
     ):
         """
         Parameters
@@ -40,7 +40,7 @@ class StateEstimator:
         servo_offset        : Servo center position (from vesc.yaml steering_angle_to_servo_offset).
         servo_gain          : Servo gain (from vesc.yaml steering_angle_to_servo_gain).
         speed_to_erpm_gain  : ERPM per m/s (from vesc.yaml speed_to_erpm_gain).
-        wheel_radius        : Wheel radius in metres.
+        sim_wheel_radius    : Sim-identified effective R_w (m). Not physical.
         """
         # The centerline runs along the x-axis at y = center_y.
         # zone_heading = 0, tangent = (1,0), normal = (0,1).
@@ -48,7 +48,7 @@ class StateEstimator:
         self.servo_offset = servo_offset
         self.servo_gain = servo_gain
         self.speed_to_erpm_gain = speed_to_erpm_gain
-        self.wheel_radius = wheel_radius
+        self.sim_wheel_radius = sim_wheel_radius
 
     @staticmethod
     def yaw_from_quaternion(qx: float, qy: float, qz: float, qw: float) -> float:
@@ -92,12 +92,8 @@ class StateEstimator:
         return float(np.deg2rad(gyro_z_dps))
 
     def wheel_omega(self, erpm: float) -> float:
-        """Wheel angular velocity (rad/s) from signed ERPM."""
-        # we assume the car is never travelling backwards
-        if erpm <= 0:
+        """Wheel ω (rad/s) for the policy obs; uses sim_wheel_radius."""
+        if erpm <= 0:  # recovery never goes backward
             return 0.0
-
-        # erpm= speed_to_erpm_gain * speed + speed_to_erpm_offset, but offset is 0
         velocity = erpm / self.speed_to_erpm_gain
-        # angular_velocity = velocity / wheel_radius
-        return velocity / self.wheel_radius
+        return velocity / self.sim_wheel_radius

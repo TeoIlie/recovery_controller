@@ -8,8 +8,8 @@ recovery_node:
 
     # Recovery zone: axis-aligned rectangle in Vicon world frame (metres)
     # Calibrate with a ruler in the Vicon space before real tests
-    zone_x_min: -2.0
-    zone_x_max:  2.0
+    zone_x_min: -3.0
+    zone_x_max:  1.0
     zone_y_min: -1.1
     zone_y_max:  1.1
     # Node rate (Hz) — should match sim timestep (0.01 s)
@@ -24,13 +24,21 @@ recovery_node:
     # Controller type: "learned" (ONNX RL policy) or "stanley" (classical)
     controller: "learned"
 
+    # Action bound for the learned policy (v_min/v_max derived from
+    # norm_bounds["linear_vel_x"]).
+    s_max: 0.52
+
+    # Sim-identified R_w from f1tenth_std.yaml; used only for the policy's
+    # curr_avg_wheel_omega. Physical R_w (0.049) lives in vesc.yaml.
+    sim_wheel_radius: 0.0434
+
     # Stanley controller gains (only used when controller: "stanley")
     stanley_k: 0.1           # Cross-track gain
     stanley_k_soft: 0.1      # Velocity softening constant [m/s]
     stanley_k_heading: 1.0   # Heading error gain
 
     # Path to trained DRL model (ONNX format)
-    model_path: "/home/jetson/f1tenth_ws/src/F1TENTH_System/recovery_controller/models/bwcm7l05/model.onnx"
+    model_path: "/home/jetson/f1tenth_ws/src/F1TENTH_System/recovery_controller/models/3jh6c8dp/model.onnx"
 
     # Path to normalization bounds YAML (output by simulator training script)
     # Action bounds (a_max, v_min, v_max, s_max) are derived from these entries.
